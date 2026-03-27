@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+
+# VS Code settings
+.vscode/
+
+# Data files
+*.xlsx
+*.csv
+
+mlruns/
+
+*.db
+
+*.png
