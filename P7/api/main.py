@@ -1,221 +1,338 @@
 """
-API de prédiction de capacité de remboursement bancaire.
-Déployable sur Render via Uvicorn/Gunicorn.
+API de prédiction binaire (label 0 ou 1)
+Modèles supportés : LightGBM, XGBoost
+Entrée  : fichier CSV ou Excel
+Sortie  : fichier original enrichi de `predicted_label` (+ `proba`)
+
+Routes :
+  POST /predict          → réponse directe (fichier)
+  POST /predict/stream   → progression SSE en temps réel, puis fichier encodé en base64
 """
 
-import logging
+import base64
+import io
+import json
 import os
-import joblib
-from contextlib import asynccontextmanager
-from typing import Any
+import time
+from typing import AsyncGenerator
 
+import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator, model_validator
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 
-# ── Logging ──────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s – %(message)s",
-)
-logger = logging.getLogger(__name__)
+# ─────────────────────────────────────────────
+# Chargement des modèles au démarrage
+# ─────────────────────────────────────────────
 
-# ── Constantes ────────────────────────────────────────────────────────────────
-# MODEL_PATH = os.getenv("MODEL_PATH", "model.pkl")
-# MAX_ROWS = int(os.getenv("MAX_ROWS", 10_000))
+MODELS_DIR = os.getenv("MODELS_DIR", "models")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))   # lignes par batch pour le streaming
 
-MODEL_PATH = r"C:\Users\jfurs\Pythonn\OpenClassrooms\DS\P7\mlruns\LightGBM_best_model.pkl"
-MAX_ROWS = 10_000
+AVAILABLE_MODELS: dict[str, object] = {}
 
-# ── Chargement du modèle (au démarrage) ──────────────────────────────────────
-model: Any = None  # sera rempli dans le lifespan
+for model_name, filename in [
+    ("lgb", "LightGBM_best_model.pkl"),
+    ("xgb", "XGBoost_best_model.pkl"),
+]:
+    path = os.path.join(MODELS_DIR, filename)
+    if os.path.exists(path):
+        AVAILABLE_MODELS[model_name] = joblib.load(path)
+        print(f"✅ Modèle '{model_name}' chargé depuis {path}")
+    else:
+        print(f"⚠️  Modèle '{model_name}' introuvable à {path} — ignoré")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Charge le modèle une seule fois au démarrage du serveur."""
-    global model
-    if not os.path.exists(MODEL_PATH):
-        logger.error("Fichier modèle introuvable : %s", MODEL_PATH)
-        raise RuntimeError(f"Fichier modèle introuvable : {MODEL_PATH}")
-    try:
-        model = joblib.load(MODEL_PATH)
-        logger.info("Modèle chargé depuis %s", MODEL_PATH)
-    except Exception as exc:
-        logger.exception("Échec du chargement du modèle")
-        raise RuntimeError(f"Impossible de charger le modèle : {exc}") from exc
-    yield
-    # Nettoyage éventuel à l'arrêt
-    model = None
-    logger.info("Modèle déchargé.")
+if not AVAILABLE_MODELS:
+    raise RuntimeError(
+        f"Aucun modèle trouvé dans '{MODELS_DIR}/'. "
+        "Vérifiez que LightGBM_best_model.pkl et/ou XGBoost_best_model.pkl sont présents."
+    )
 
+# ─────────────────────────────────────────────
+# Application FastAPI
+# ─────────────────────────────────────────────
 
-# ── Application ───────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Credit Default Prediction API",
+    title="ML Prediction API",
     description=(
-        "Reçoit un DataFrame (liste de lignes JSON) et retourne "
-        "la probabilité de défaut de remboursement pour chaque ligne."
+        "Upload un fichier CSV ou Excel, "
+        "récupère le même fichier avec une colonne `predicted_label` (0 ou 1) "
+        "et une colonne `proba` (probabilité de la classe 1).\n\n"
+        "- **POST /predict** : réponse directe (fichier)\n"
+        "- **POST /predict/stream** : progression SSE en temps réel (barre tqdm côté client)"
     ),
-    version="1.0.0",
-    lifespan=lifespan,
+    version="1.1.0",
 )
 
 
-# ── Schémas Pydantic ──────────────────────────────────────────────────────────
-class PredictRequest(BaseModel):
-    """Corps de la requête POST /predict."""
+# ─────────────────────────────────────────────
+# Utilitaires
+# ─────────────────────────────────────────────
 
-    data: list[dict[str, Any]]
-
-    @field_validator("data")
-    @classmethod
-    def data_not_empty(cls, v: list) -> list:
-        if not v:
-            raise ValueError("Le champ 'data' ne peut pas être une liste vide.")
-        return v
-
-    @model_validator(mode="after")
-    def check_max_rows(self) -> "PredictRequest":
-        if len(self.data) > MAX_ROWS:
-            raise ValueError(
-                f"Trop de lignes : {len(self.data)} reçues, maximum autorisé : {MAX_ROWS}."
-            )
-        return self
+def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Reproduit le nettoyage de noms de colonnes fait à l'entraînement."""
+    df.columns = df.columns.str.replace(r"[^0-9a-zA-Z_]", "_", regex=True)
+    return df
 
 
-class PredictionResult(BaseModel):
-    """Une ligne de résultat."""
+def _read_upload(file: UploadFile) -> tuple[pd.DataFrame, bytes]:
+    """Lit un fichier CSV ou Excel uploadé. Retourne (DataFrame, contenu brut)."""
+    content = file.file.read()
+    filename = file.filename or ""
 
-    row_index: int
-    default_probability: float
+    if filename.endswith(".csv"):
+        try:
+            return pd.read_csv(io.BytesIO(content)), content
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Impossible de lire le CSV : {e}")
+
+    elif filename.endswith((".xlsx", ".xls")):
+        engine = "openpyxl" if filename.endswith(".xlsx") else "xlrd"
+        try:
+            return pd.read_excel(io.BytesIO(content), engine=engine), content
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Impossible de lire le fichier Excel : {e}")
+
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail="Format non supporté. Envoyez un fichier .csv, .xlsx ou .xls.",
+        )
 
 
-class PredictResponse(BaseModel):
-    """Réponse complète de /predict."""
+def _get_expected_features(model) -> list | None:
+    """Récupère les noms de features attendus par le modèle."""
+    if hasattr(model, "feature_names_in_"):
+        return list(model.feature_names_in_)
+    elif hasattr(model, "feature_name_"):       # LightGBM
+        return list(model.feature_name_())
+    elif hasattr(model, "get_booster"):         # XGBoost
+        return model.get_booster().feature_names
+    return None
 
-    n_rows: int
-    predictions: list[PredictionResult]
+
+def _validate_and_align(df_clean: pd.DataFrame, expected_features: list | None) -> pd.DataFrame:
+    """Vérifie que les colonnes sont présentes et les réordonne."""
+    if not expected_features:
+        return df_clean
+    missing = [f for f in expected_features if f not in df_clean.columns]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{len(missing)} colonne(s) attendue(s) absente(s) du fichier : "
+                f"{missing[:10]}{'...' if len(missing) > 10 else ''}"
+            ),
+        )
+    return df_clean[expected_features]
 
 
-# ── Gestionnaires d'erreurs globaux ──────────────────────────────────────────
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
-    """Retourne un 422 lisible en cas d'erreur de validation Pydantic."""
-    logger.warning("Erreur de validation : %s", exc.errors())
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors(), "message": "Données d'entrée invalides."},
+def _predict_full(model, df_clean: pd.DataFrame, threshold: float) -> tuple[np.ndarray, np.ndarray]:
+    """Prédiction complète en une passe (utilisée par /predict)."""
+    expected_features = _get_expected_features(model)
+    df_aligned = _validate_and_align(df_clean, expected_features)
+    try:
+        probas = model.predict_proba(df_aligned)[:, 1]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la prédiction : {e}")
+    labels = (probas >= threshold).astype(int)
+    return labels, probas
+
+
+def _serialize(df: pd.DataFrame, filename: str) -> tuple[bytes, str, str]:
+    """Sérialise le DataFrame en bytes. Retourne (bytes, media_type, out_filename)."""
+    buf = io.BytesIO()
+    if filename.endswith(".csv"):
+        df.to_csv(buf, index=False)
+        media_type = "text/csv"
+        out_name = filename.replace(".csv", "_predictions.csv")
+    else:
+        df.to_excel(buf, index=False, engine="openpyxl")
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        suffix = ".xlsx" if filename.endswith(".xlsx") else ".xls"
+        out_name = filename.replace(suffix, "_predictions.xlsx")
+    buf.seek(0)
+    return buf.read(), media_type, out_name
+
+
+def _sse(event: str, data: dict) -> str:
+    """Formate un message SSE."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+# ─────────────────────────────────────────────
+# Générateur SSE (progression par batch)
+# ─────────────────────────────────────────────
+
+async def _predict_stream_generator(
+    df_raw: pd.DataFrame,
+    df_clean: pd.DataFrame,
+    model,
+    threshold: float,
+    return_proba: bool,
+    filename: str,
+) -> AsyncGenerator[str, None]:
+    """
+    Yields des messages SSE :
+      - event: progress  → {"processed": N, "total": T, "percent": P, "elapsed": S}
+      - event: result    → {"filename": "...", "file_b64": "...", "media_type": "..."}
+      - event: error     → {"detail": "..."}
+    """
+    total = len(df_raw)
+    expected_features = _get_expected_features(model)
+
+    try:
+        df_clean = _validate_and_align(df_clean, expected_features)
+    except HTTPException as e:
+        yield _sse("error", {"detail": e.detail})
+        return
+
+    all_labels: list = []
+    all_probas: list = []
+    processed = 0
+    start = time.perf_counter()
+
+    # Message initial
+    yield _sse("progress", {"processed": 0, "total": total, "percent": 0, "elapsed": 0.0})
+
+    for start_idx in range(0, total, BATCH_SIZE):
+        batch = df_clean.iloc[start_idx : start_idx + BATCH_SIZE]
+
+        try:
+            probas_batch = model.predict_proba(batch)[:, 1]
+        except Exception as e:
+            yield _sse("error", {"detail": f"Erreur batch {start_idx}-{start_idx+len(batch)} : {e}"})
+            return
+
+        labels_batch = (probas_batch >= threshold).astype(int)
+        all_labels.append(labels_batch)
+        all_probas.append(probas_batch)
+
+        processed += len(batch)
+        elapsed = round(time.perf_counter() - start, 2)
+        percent = round(processed / total * 100, 1)
+
+        yield _sse("progress", {
+            "processed": processed,
+            "total": total,
+            "percent": percent,
+            "elapsed": elapsed,
+        })
+
+    # Assemblage du résultat final
+    df_out = df_raw.copy()
+    df_out["predicted_label"] = np.concatenate(all_labels)
+    if return_proba:
+        df_out["proba"] = np.round(np.concatenate(all_probas), 4)
+
+    file_bytes, media_type, out_name = _serialize(df_out, filename)
+    file_b64 = base64.b64encode(file_bytes).decode("utf-8")
+
+    yield _sse("result", {
+        "filename": out_name,
+        "media_type": media_type,
+        "file_b64": file_b64,
+        "total": total,
+        "elapsed": round(time.perf_counter() - start, 2),
+    })
+
+
+# ─────────────────────────────────────────────
+# Routes
+# ─────────────────────────────────────────────
+
+@app.get("/", tags=["Health"])
+def root():
+    return {
+        "status": "ok",
+        "available_models": list(AVAILABLE_MODELS.keys()),
+        "routes": {
+            "POST /predict": "Prédiction directe — retourne le fichier enrichi",
+            "POST /predict/stream": "Prédiction avec progression SSE (tqdm côté client)",
+        },
+    }
+
+
+@app.get("/models", tags=["Health"])
+def list_models():
+    """Liste les modèles chargés."""
+    return {"available_models": list(AVAILABLE_MODELS.keys())}
+
+
+@app.post("/predict", tags=["Prediction"])
+def predict(
+    file: UploadFile = File(..., description="Fichier CSV ou Excel à scorer"),
+    model: str = Query(default="lgb", description="'lgb' ou 'xgb'"),
+    threshold: float = Query(default=0.5, ge=0.0, le=1.0, description="Seuil de décision"),
+    return_proba: bool = Query(default=True, description="Ajouter la colonne 'proba'"),
+):
+    """Prédiction directe — retourne le fichier enrichi en une seule réponse."""
+    if model not in AVAILABLE_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Modèle '{model}' inconnu. Disponibles : {list(AVAILABLE_MODELS.keys())}",
+        )
+
+    df_raw, _ = _read_upload(file)
+    if df_raw.empty:
+        raise HTTPException(status_code=422, detail="Le fichier est vide.")
+
+    df_clean = _clean_columns(df_raw.copy())
+    labels, probas = _predict_full(AVAILABLE_MODELS[model], df_clean, threshold)
+
+    df_raw["predicted_label"] = labels
+    if return_proba:
+        df_raw["proba"] = probas.round(4)
+
+    file_bytes, media_type, out_name = _serialize(df_raw, file.filename or "output.csv")
+    return StreamingResponse(
+        io.BytesIO(file_bytes),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
     )
 
 
-@app.exception_handler(Exception)
-async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Capture toute exception non gérée et retourne un 500."""
-    logger.exception("Erreur interne non gérée")
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"message": "Erreur interne du serveur.", "detail": str(exc)},
+@app.post("/predict/stream", tags=["Prediction"])
+async def predict_stream(
+    file: UploadFile = File(..., description="Fichier CSV ou Excel à scorer"),
+    model: str = Query(default="lgb", description="'lgb' ou 'xgb'"),
+    threshold: float = Query(default=0.5, ge=0.0, le=1.0, description="Seuil de décision"),
+    return_proba: bool = Query(default=True, description="Ajouter la colonne 'proba'"),
+):
+    """
+    Prédiction avec **progression en temps réel** via Server-Sent Events.
+
+    Le client reçoit des événements SSE :
+    - `progress` : avancement batch par batch
+    - `result`   : fichier final encodé en base64
+    - `error`    : message d'erreur si quelque chose échoue
+
+    Utilisez le script `predict_client.py` fourni pour une barre tqdm automatique.
+    """
+    if model not in AVAILABLE_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Modèle '{model}' inconnu. Disponibles : {list(AVAILABLE_MODELS.keys())}",
+        )
+
+    df_raw, _ = _read_upload(file)
+    if df_raw.empty:
+        raise HTTPException(status_code=422, detail="Le fichier est vide.")
+
+    df_clean = _clean_columns(df_raw.copy())
+
+    return StreamingResponse(
+        _predict_stream_generator(
+            df_raw=df_raw,
+            df_clean=df_clean,
+            model=AVAILABLE_MODELS[model],
+            threshold=threshold,
+            return_proba=return_proba,
+            filename=file.filename or "output.csv",
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # désactive le buffering nginx sur Render
+        },
     )
-
-
-# ── Routes ────────────────────────────────────────────────────────────────────
-@app.get("/health", summary="Vérification de l'état du service")
-def health() -> dict:
-    """Endpoint de health-check utilisé par Render."""
-    return {"status": "ok", "model_loaded": model is not None}
-
-
-@app.post(
-    "/predict",
-    response_model=PredictResponse,
-    summary="Prédiction de probabilité de défaut",
-    responses={
-        422: {"description": "Données d'entrée invalides"},
-        500: {"description": "Erreur interne"},
-        503: {"description": "Modèle non disponible"},
-    },
-)
-
-def predict(request: PredictRequest) -> PredictResponse:
-    """
-    Reçoit une liste de lignes (dict) représentant un DataFrame,
-    et retourne la probabilité de défaut pour chaque ligne.
-
-    - **data** : liste de dictionnaires (une ligne = un dict feature→valeur).
-    """
-    # 1. Vérifier que le modèle est chargé
-    if model is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Le modèle n'est pas disponible. Veuillez réessayer plus tard.",
-        )
-
-    # 2. Construire le DataFrame
-    try:
-        df = pd.DataFrame(request.data)
-    except Exception as exc:
-        logger.error("Impossible de construire le DataFrame : %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Impossible de convertir les données en DataFrame : {exc}",
-        ) from exc
-
-    # 3. Vérifier qu'il n'y a pas que des colonnes vides
-    if df.empty or df.shape[1] == 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Le DataFrame construit est vide (aucune colonne détectée).",
-        )
-
-    # 4. Vérifier les valeurs infinies ou 100 % NaN sur une colonne
-    if np.isinf(df.select_dtypes(include=[np.number])).any().any():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Les données contiennent des valeurs infinies (inf / -inf).",
-        )
-
-    # 5. Inférence
-    try:
-        # predict_proba retourne [[p_class0, p_class1], ...]
-        probas = model.predict_proba(df)
-    except AttributeError:
-        logger.error("Le modèle ne supporte pas predict_proba.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Le modèle chargé ne supporte pas predict_proba().",
-        )
-    except ValueError as exc:
-        logger.error("Erreur de valeur lors de predict_proba : %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Erreur lors de la prédiction (features incompatibles ?) : {exc}",
-        ) from exc
-    except Exception as exc:
-        logger.exception("Erreur inattendue lors de la prédiction")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur inattendue lors de la prédiction : {exc}",
-        ) from exc
-
-    # 6. Extraire la probabilité de défaut (classe 1)
-    if probas.shape[1] < 2:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Le modèle ne retourne pas deux classes (0 et 1).",
-        )
-
-    default_probs: list[float] = probas[:, 1].tolist()
-
-    # 7. Construire la réponse
-    predictions = [
-        PredictionResult(row_index=i, default_probability=round(p, 6))
-        for i, p in enumerate(default_probs)
-    ]
-
-    logger.info("Prédiction réussie pour %d lignes.", len(predictions))
-    return PredictResponse(n_rows=len(predictions), predictions=predictions)
