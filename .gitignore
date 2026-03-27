@@ -13,3 +13,5 @@ mlruns/
 *.db
 
 *.png
+
+*.parquet
