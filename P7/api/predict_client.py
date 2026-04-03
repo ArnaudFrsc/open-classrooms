@@ -22,10 +22,11 @@ from tqdm import tqdm
 # ─────────────────────────────────────────────
 
 ROOT_DIR = r'C:\Users\jfurs\Pythonn\OpenClassrooms\DS\P7\data'
+P8_DIR = r'C:\Users\jfurs\Pythonn\OpenClassrooms\DS\P8\data'
 
 API_URL      = "https://open-classrooms.onrender.com"   # URL de l'API
 INPUT_FILE   = f'{ROOT_DIR}\\api_test_sample.csv'       # Fichier CSV ou Excel
-OUTPUT_FILE  = f'{ROOT_DIR}\\predictions.csv'           # Fichier de sortie (None = nom auto)
+OUTPUT_FILE  = f'{P8_DIR}\\predictions.csv'           # Fichier de sortie (None = nom auto)
 
 MODEL        = "lgb"     # "lgb" ou "xgb"
 THRESHOLD    = 0.434     # Seuil de décision (0.0 → 1.0)
