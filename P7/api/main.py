@@ -7,6 +7,7 @@ Sortie  : fichier original enrichi de `predicted_label` (+ `proba`)
 Routes :
   POST /predict          → réponse directe (fichier)
   POST /predict/stream   → progression SSE en temps réel, puis fichier encodé en base64
+  POST /predict/explain  → prédiction + top-10 SHAP values par client (colonnes shap_<feature>)
 """
 
 import base64
@@ -19,6 +20,7 @@ from typing import AsyncGenerator
 import joblib
 import numpy as np
 import pandas as pd
+import shap
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -29,7 +31,10 @@ from fastapi.responses import StreamingResponse
 MODELS_DIR = os.getenv("MODELS_DIR", "models")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))   # lignes par batch pour le streaming
 
+ID_COLUMN = "SK_ID_CURR"   # colonne identifiant client — jamais droppée
+
 AVAILABLE_MODELS: dict[str, object] = {}
+SHAP_EXPLAINERS: dict[str, object] = {}   # explainers SHAP pré-construits par modèle
 
 for model_name, filename in [
     ("lgb", "LightGBM_best_model.pkl"),
@@ -37,8 +42,14 @@ for model_name, filename in [
 ]:
     path = os.path.join(MODELS_DIR, filename)
     if os.path.exists(path):
-        AVAILABLE_MODELS[model_name] = joblib.load(path)
-        print(f"✅ Modèle '{model_name}' chargé depuis {path}")
+        loaded_model = joblib.load(path)
+        AVAILABLE_MODELS[model_name] = loaded_model
+        # Pré-construction de l'explainer SHAP (TreeExplainer — compatible LGB & XGB)
+        try:
+            SHAP_EXPLAINERS[model_name] = shap.TreeExplainer(loaded_model)
+            print(f"✅ Modèle '{model_name}' + explainer SHAP chargés depuis {path}")
+        except Exception as e:
+            print(f"⚠️  Modèle '{model_name}' chargé mais explainer SHAP non disponible : {e}")
     else:
         print(f"⚠️  Modèle '{model_name}' introuvable à {path} — ignoré")
 
@@ -59,9 +70,11 @@ app = FastAPI(
         "récupère le même fichier avec une colonne `predicted_label` (0 ou 1) "
         "et une colonne `proba` (probabilité de la classe 1).\n\n"
         "- **POST /predict** : réponse directe (fichier)\n"
-        "- **POST /predict/stream** : progression SSE en temps réel (barre tqdm côté client)"
+        "- **POST /predict/stream** : progression SSE en temps réel (barre tqdm côté client)\n"
+        "- **POST /predict/explain** : prédiction + top-10 SHAP values par client\n\n"
+        f"La colonne `{ID_COLUMN}` est toujours conservée dans le fichier de sortie."
     ),
-    version="1.1.0",
+    version="1.2.0",
 )
 
 
@@ -111,11 +124,28 @@ def _get_expected_features(model) -> list | None:
     return None
 
 
+def _extract_id_column(df: pd.DataFrame) -> pd.Series | None:
+    """
+    Extrait la colonne ID client si elle est présente.
+    Retourne la Series (index aligné) ou None si absente.
+    """
+    if ID_COLUMN in df.columns:
+        return df[ID_COLUMN].copy()
+    return None
+
+
 def _validate_and_align(df_clean: pd.DataFrame, expected_features: list | None) -> pd.DataFrame:
-    """Vérifie que les colonnes sont présentes et les réordonne."""
+    """
+    Vérifie que les features attendues sont présentes et réordonne.
+    La colonne ID (SK_ID_CURR) est ignorée si elle n'est pas une feature du modèle.
+    """
     if not expected_features:
         return df_clean
-    missing = [f for f in expected_features if f not in df_clean.columns]
+
+    # On retire SK_ID_CURR des colonnes à vérifier — c'est un identifiant, pas une feature
+    features_to_check = [f for f in expected_features if f != ID_COLUMN]
+    missing = [f for f in features_to_check if f not in df_clean.columns]
+
     if missing:
         raise HTTPException(
             status_code=422,
@@ -124,7 +154,7 @@ def _validate_and_align(df_clean: pd.DataFrame, expected_features: list | None) 
                 f"{missing[:10]}{'...' if len(missing) > 10 else ''}"
             ),
         )
-    return df_clean[expected_features]
+    return df_clean[features_to_check]
 
 
 def _predict_full(model, df_clean: pd.DataFrame, threshold: float) -> tuple[np.ndarray, np.ndarray]:
@@ -137,6 +167,41 @@ def _predict_full(model, df_clean: pd.DataFrame, threshold: float) -> tuple[np.n
         raise HTTPException(status_code=500, detail=f"Erreur lors de la prédiction : {e}")
     labels = (probas >= threshold).astype(int)
     return labels, probas
+
+
+def _compute_shap_top10(
+    explainer,
+    df_aligned: pd.DataFrame,
+    feature_names: list[str],
+    n_top: int = 10,
+) -> pd.DataFrame:
+    """
+    Calcule les SHAP values et retourne un DataFrame avec les top-N features
+    (par importance globale sur le batch) sous forme de colonnes shap_<feature>.
+
+    Les colonnes sont triées par |mean SHAP| décroissant sur l'ensemble du batch,
+    puis incluses pour chaque ligne.
+    """
+    try:
+        shap_values = explainer.shap_values(df_aligned)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors du calcul SHAP : {e}")
+
+    # LightGBM peut retourner une liste [class0, class1] — on prend la classe 1
+    if isinstance(shap_values, list):
+        shap_values = shap_values[1]
+
+    # Sélection des top-N features par |mean SHAP| sur tout le batch
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    top_indices = np.argsort(mean_abs_shap)[::-1][:n_top]
+    top_features = [feature_names[i] for i in top_indices]
+
+    shap_df = pd.DataFrame(
+        shap_values[:, top_indices],
+        columns=[f"shap_{f}" for f in top_features],
+        index=df_aligned.index,
+    )
+    return shap_df
 
 
 def _serialize(df: pd.DataFrame, filename: str) -> tuple[bytes, str, str]:
@@ -160,6 +225,34 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _build_output(
+    df_raw: pd.DataFrame,
+    id_series: pd.Series | None,
+    labels: np.ndarray,
+    probas: np.ndarray,
+    return_proba: bool,
+    shap_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """
+    Assemble le DataFrame de sortie.
+    - SK_ID_CURR est toujours en première colonne si présent dans les données d'origine.
+    - Les colonnes SHAP viennent après proba.
+    """
+    df_out = df_raw.copy()
+    df_out["predicted_label"] = labels
+    if return_proba:
+        df_out["proba"] = np.round(probas, 4)
+    if shap_df is not None:
+        df_out = pd.concat([df_out.reset_index(drop=True), shap_df.reset_index(drop=True)], axis=1)
+
+    # Réordonner pour mettre SK_ID_CURR en premier si présent
+    if id_series is not None and ID_COLUMN in df_out.columns:
+        cols = [ID_COLUMN] + [c for c in df_out.columns if c != ID_COLUMN]
+        df_out = df_out[cols]
+
+    return df_out
+
+
 # ─────────────────────────────────────────────
 # Générateur SSE (progression par batch)
 # ─────────────────────────────────────────────
@@ -180,9 +273,10 @@ async def _predict_stream_generator(
     """
     total = len(df_raw)
     expected_features = _get_expected_features(model)
+    id_series = _extract_id_column(df_clean)
 
     try:
-        df_clean = _validate_and_align(df_clean, expected_features)
+        df_aligned = _validate_and_align(df_clean, expected_features)
     except HTTPException as e:
         yield _sse("error", {"detail": e.detail})
         return
@@ -196,7 +290,7 @@ async def _predict_stream_generator(
     yield _sse("progress", {"processed": 0, "total": total, "percent": 0, "elapsed": 0.0})
 
     for start_idx in range(0, total, BATCH_SIZE):
-        batch = df_clean.iloc[start_idx : start_idx + BATCH_SIZE]
+        batch = df_aligned.iloc[start_idx : start_idx + BATCH_SIZE]
 
         try:
             probas_batch = model.predict_proba(batch)[:, 1]
@@ -220,10 +314,13 @@ async def _predict_stream_generator(
         })
 
     # Assemblage du résultat final
-    df_out = df_raw.copy()
-    df_out["predicted_label"] = np.concatenate(all_labels)
-    if return_proba:
-        df_out["proba"] = np.round(np.concatenate(all_probas), 4)
+    df_out = _build_output(
+        df_raw=df_raw,
+        id_series=id_series,
+        labels=np.concatenate(all_labels),
+        probas=np.concatenate(all_probas),
+        return_proba=return_proba,
+    )
 
     file_bytes, media_type, out_name = _serialize(df_out, filename)
     file_b64 = base64.b64encode(file_bytes).decode("utf-8")
@@ -246,17 +343,22 @@ def root():
     return {
         "status": "ok",
         "available_models": list(AVAILABLE_MODELS.keys()),
+        "id_column_preserved": ID_COLUMN,
         "routes": {
             "POST /predict": "Prédiction directe — retourne le fichier enrichi",
             "POST /predict/stream": "Prédiction avec progression SSE (tqdm côté client)",
+            "POST /predict/explain": "Prédiction + top-10 SHAP values par client",
         },
     }
 
 
 @app.get("/models", tags=["Health"])
 def list_models():
-    """Liste les modèles chargés."""
-    return {"available_models": list(AVAILABLE_MODELS.keys())}
+    """Liste les modèles chargés et la disponibilité SHAP."""
+    return {
+        "available_models": list(AVAILABLE_MODELS.keys()),
+        "shap_available": list(SHAP_EXPLAINERS.keys()),
+    }
 
 
 @app.post("/predict", tags=["Prediction"])
@@ -266,7 +368,10 @@ def predict(
     threshold: float = Query(default=0.5, ge=0.0, le=1.0, description="Seuil de décision"),
     return_proba: bool = Query(default=True, description="Ajouter la colonne 'proba'"),
 ):
-    """Prédiction directe — retourne le fichier enrichi en une seule réponse."""
+    """
+    Prédiction directe — retourne le fichier enrichi en une seule réponse.
+    La colonne SK_ID_CURR est conservée et placée en première position.
+    """
     if model not in AVAILABLE_MODELS:
         raise HTTPException(
             status_code=400,
@@ -278,13 +383,18 @@ def predict(
         raise HTTPException(status_code=422, detail="Le fichier est vide.")
 
     df_clean = _clean_columns(df_raw.copy())
+    id_series = _extract_id_column(df_clean)
     labels, probas = _predict_full(AVAILABLE_MODELS[model], df_clean, threshold)
 
-    df_raw["predicted_label"] = labels
-    if return_proba:
-        df_raw["proba"] = probas.round(4)
+    df_out = _build_output(
+        df_raw=df_raw,
+        id_series=id_series,
+        labels=labels,
+        probas=probas,
+        return_proba=return_proba,
+    )
 
-    file_bytes, media_type, out_name = _serialize(df_raw, file.filename or "output.csv")
+    file_bytes, media_type, out_name = _serialize(df_out, file.filename or "output.csv")
     return StreamingResponse(
         io.BytesIO(file_bytes),
         media_type=media_type,
@@ -301,6 +411,7 @@ async def predict_stream(
 ):
     """
     Prédiction avec **progression en temps réel** via Server-Sent Events.
+    La colonne SK_ID_CURR est conservée et placée en première position.
 
     Le client reçoit des événements SSE :
     - `progress` : avancement batch par batch
@@ -335,4 +446,86 @@ async def predict_stream(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",   # désactive le buffering nginx sur Render
         },
+    )
+
+
+@app.post("/predict/explain", tags=["Prediction"])
+def predict_explain(
+    file: UploadFile = File(..., description="Fichier CSV ou Excel à scorer"),
+    model: str = Query(default="lgb", description="'lgb' ou 'xgb'"),
+    threshold: float = Query(default=0.5, ge=0.0, le=1.0, description="Seuil de décision"),
+    return_proba: bool = Query(default=True, description="Ajouter la colonne 'proba'"),
+    n_top: int = Query(default=10, ge=1, le=50, description="Nombre de features SHAP à inclure"),
+):
+    """
+    Prédiction enrichie d'une **analyse SHAP locale** par client.
+
+    Le fichier de sortie contient, pour chaque ligne :
+    - `SK_ID_CURR` : identifiant client (en première colonne)
+    - `predicted_label` : 0 ou 1
+    - `proba` : probabilité classe 1 (si return_proba=True)
+    - `shap_<feature>` × n_top : valeur SHAP des features les plus importantes
+       (sélectionnées par |mean SHAP| décroissant sur l'ensemble du batch)
+
+    **Interprétation SHAP** :
+    - Valeur positive → pousse la prédiction vers la classe 1 (défaut)
+    - Valeur négative → pousse la prédiction vers la classe 0 (non-défaut)
+    - |valeur| plus grande → plus d'influence sur la décision
+
+    ⚠️ Plus lent que /predict car le calcul SHAP est intensif.
+    """
+    if model not in AVAILABLE_MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Modèle '{model}' inconnu. Disponibles : {list(AVAILABLE_MODELS.keys())}",
+        )
+    if model not in SHAP_EXPLAINERS:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Explainer SHAP non disponible pour le modèle '{model}'.",
+        )
+
+    df_raw, _ = _read_upload(file)
+    if df_raw.empty:
+        raise HTTPException(status_code=422, detail="Le fichier est vide.")
+
+    df_clean = _clean_columns(df_raw.copy())
+    id_series = _extract_id_column(df_clean)
+
+    # Prédiction
+    expected_features = _get_expected_features(AVAILABLE_MODELS[model])
+    df_aligned = _validate_and_align(df_clean, expected_features)
+    feature_names = list(df_aligned.columns)
+
+    try:
+        probas = AVAILABLE_MODELS[model].predict_proba(df_aligned)[:, 1]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la prédiction : {e}")
+    labels = (probas >= threshold).astype(int)
+
+    # Calcul SHAP top-N
+    shap_df = _compute_shap_top10(
+        explainer=SHAP_EXPLAINERS[model],
+        df_aligned=df_aligned,
+        feature_names=feature_names,
+        n_top=n_top,
+    )
+
+    # Assemblage
+    df_out = _build_output(
+        df_raw=df_raw,
+        id_series=id_series,
+        labels=labels,
+        probas=probas,
+        return_proba=return_proba,
+        shap_df=shap_df,
+    )
+
+    file_bytes, media_type, out_name = _serialize(df_out, file.filename or "output.csv")
+    out_name = out_name.replace("_predictions.", "_explained.")
+
+    return StreamingResponse(
+        io.BytesIO(file_bytes),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{out_name}"'},
     )

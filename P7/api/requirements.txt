@@ -118,6 +118,7 @@ scikit-learn==1.8.0
 scipy==1.17.1
 seaborn==0.13.2
 setuptools==80.10.2
+shap==0.47.2
 shellingham==1.5.4
 six==1.17.0
 sklearn-compat==0.1.5
