@@ -11,9 +11,157 @@ et affiche pour chaque client :
 import re
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+# ─────────────────────────────────────────────
+# Dictionnaire des noms de features — Home Credit
+# Source : HomeCredit_columns_description.csv (Kaggle)
+# Couvre application_train/test + features engineerées courantes
+# ─────────────────────────────────────────────
+
+FEATURE_LABELS: dict[str, str] = {
+    # ── Identité & démographie ──
+    "SK_ID_CURR":                        "ID Client",
+    "CODE_GENDER":                       "Genre",
+    "FLAG_OWN_CAR":                      "Possède une voiture",
+    "FLAG_OWN_REALTY":                   "Possède un bien immobilier",
+    "CNT_CHILDREN":                      "Nombre d'enfants",
+    "NAME_CONTRACT_TYPE":                "Type de contrat",
+    "NAME_TYPE_SUITE":                   "Accompagnateur lors de la demande",
+    "NAME_INCOME_TYPE":                  "Type de revenus",
+    "NAME_EDUCATION_TYPE":               "Niveau d'éducation",
+    "NAME_FAMILY_STATUS":                "Situation familiale",
+    "NAME_HOUSING_TYPE":                 "Type de logement",
+    "OCCUPATION_TYPE":                   "Profession",
+    "ORGANIZATION_TYPE":                 "Type d'organisation employeur",
+    "WEEKDAY_APPR_PROCESS_START":        "Jour de la semaine (demande)",
+    "HOUR_APPR_PROCESS_START":           "Heure de la demande",
+    "LIVE_CITY_NOT_WORK_CITY":           "Ne travaille pas dans sa ville de résidence",
+    "REG_CITY_NOT_LIVE_CITY":            "Ville enregistrée ≠ ville de résidence",
+    "REG_CITY_NOT_WORK_CITY":            "Ville enregistrée ≠ ville de travail",
+    "LIVE_REGION_NOT_WORK_REGION":       "Région résidence ≠ région travail",
+    "REG_REGION_NOT_LIVE_REGION":        "Région enregistrée ≠ région de résidence",
+    "REG_REGION_NOT_WORK_REGION":        "Région enregistrée ≠ région de travail",
+    "EMERGENCYSTATE_MODE":               "État d'urgence du logement",
+    "FONDKAPREMONT_MODE":                "Mode rénovation Fondkapremont",
+    "HOUSETYPE_MODE":                    "Type de maison (mode)",
+    "WALLSMATERIAL_MODE":                "Matériau des murs (mode)",
+
+    # ── Finances & revenus ──
+    "AMT_INCOME_TOTAL":                  "Revenus annuels totaux",
+    "AMT_CREDIT":                        "Montant du crédit demandé",
+    "AMT_ANNUITY":                       "Montant de l'annuité",
+    "AMT_GOODS_PRICE":                   "Prix du bien financé",
+    "AMT_REQ_CREDIT_BUREAU_HOUR":        "Demandes bureau crédit (dernière heure)",
+    "AMT_REQ_CREDIT_BUREAU_DAY":         "Demandes bureau crédit (dernier jour)",
+    "AMT_REQ_CREDIT_BUREAU_WEEK":        "Demandes bureau crédit (dernière semaine)",
+    "AMT_REQ_CREDIT_BUREAU_MON":         "Demandes bureau crédit (dernier mois)",
+    "AMT_REQ_CREDIT_BUREAU_QRT":         "Demandes bureau crédit (dernier trimestre)",
+    "AMT_REQ_CREDIT_BUREAU_YEAR":        "Demandes bureau crédit (dernière année)",
+
+    # ── Scores externes ──
+    "EXT_SOURCE_1":                      "Score externe 1",
+    "EXT_SOURCE_2":                      "Score externe 2",
+    "EXT_SOURCE_3":                      "Score externe 3",
+
+    # ── Durées / âges (en jours, valeurs négatives = passé) ──
+    "DAYS_BIRTH":                        "Âge (jours depuis naissance)",
+    "DAYS_EMPLOYED":                     "Ancienneté emploi (jours)",
+    "DAYS_REGISTRATION":                 "Jours depuis changement d'enregistrement",
+    "DAYS_ID_PUBLISH":                   "Jours depuis renouvellement pièce d'identité",
+    "DAYS_LAST_PHONE_CHANGE":            "Jours depuis changement de téléphone",
+
+    # ── Flags documents fournis ──
+    "FLAG_DOCUMENT_2":                   "Document 2 fourni",
+    "FLAG_DOCUMENT_3":                   "Document 3 fourni",
+    "FLAG_DOCUMENT_4":                   "Document 4 fourni",
+    "FLAG_DOCUMENT_5":                   "Document 5 fourni",
+    "FLAG_DOCUMENT_6":                   "Document 6 fourni",
+    "FLAG_DOCUMENT_7":                   "Document 7 fourni",
+    "FLAG_DOCUMENT_8":                   "Document 8 fourni",
+    "FLAG_DOCUMENT_9":                   "Document 9 fourni",
+    "FLAG_DOCUMENT_10":                  "Document 10 fourni",
+    "FLAG_DOCUMENT_11":                  "Document 11 fourni",
+    "FLAG_DOCUMENT_12":                  "Document 12 fourni",
+    "FLAG_DOCUMENT_13":                  "Document 13 fourni",
+    "FLAG_DOCUMENT_14":                  "Document 14 fourni",
+    "FLAG_DOCUMENT_15":                  "Document 15 fourni",
+    "FLAG_DOCUMENT_16":                  "Document 16 fourni",
+    "FLAG_DOCUMENT_17":                  "Document 17 fourni",
+    "FLAG_DOCUMENT_18":                  "Document 18 fourni",
+    "FLAG_DOCUMENT_19":                  "Document 19 fourni",
+    "FLAG_DOCUMENT_20":                  "Document 20 fourni",
+    "FLAG_DOCUMENT_21":                  "Document 21 fourni",
+    "FLAG_EMAIL":                        "Email fourni",
+    "FLAG_EMP_PHONE":                    "Téléphone employeur fourni",
+    "FLAG_MOBIL":                        "Téléphone mobile fourni",
+    "FLAG_PHONE":                        "Téléphone fixe fourni",
+    "FLAG_WORK_PHONE":                   "Téléphone professionnel fourni",
+    "FLAG_CONT_MOBILE":                  "Téléphone mobile joignable",
+
+    # ── Caractéristiques du logement / région ──
+    "REGION_POPULATION_RELATIVE":        "Population relative de la région",
+    "REGION_RATING_CLIENT":              "Note de la région client (1–3)",
+    "REGION_RATING_CLIENT_W_CITY":       "Note de la région client (avec ville)",
+    "TOTALAREA_MODE":                    "Surface totale du logement (mode)",
+    "YEARS_BUILD_AVG":                   "Ancienneté de construction (moyenne)",
+    "YEARS_BEGINEXPLUATATION_AVG":       "Début d'exploitation du logement (moy.)",
+    "FLOORSMAX_AVG":                     "Nombre d'étages max (moyenne)",
+    "FLOORSMIN_AVG":                     "Nombre d'étages min (moyenne)",
+    "LIVINGAREA_AVG":                    "Surface habitable (moyenne)",
+    "LIVINGAPARTMENTS_AVG":              "Appartements habitables (moyenne)",
+    "NONLIVINGAREA_AVG":                 "Surface non habitable (moyenne)",
+    "BASEMENTAREA_AVG":                  "Surface sous-sol (moyenne)",
+    "COMMONAREA_AVG":                    "Surface commune (moyenne)",
+    "ELEVATORS_AVG":                     "Nombre d'ascenseurs (moyenne)",
+    "ENTRANCES_AVG":                     "Nombre d'entrées (moyenne)",
+    "LANDAREA_AVG":                      "Surface terrain (moyenne)",
+    "APARTMENTS_AVG":                    "Nombre d'appartements (moyenne)",
+
+    # ── Contacts & entourage ──
+    "CNT_FAM_MEMBERS":                   "Nombre de membres de la famille",
+    "OBS_30_CNT_SOCIAL_CIRCLE":          "Contacts observés défaut 30j (entourage)",
+    "DEF_30_CNT_SOCIAL_CIRCLE":          "Contacts en défaut 30j (entourage)",
+    "OBS_60_CNT_SOCIAL_CIRCLE":          "Contacts observés défaut 60j (entourage)",
+    "DEF_60_CNT_SOCIAL_CIRCLE":          "Contacts en défaut 60j (entourage)",
+
+    # ── Features engineerées courantes ──
+    "CREDIT_INCOME_RATIO":               "Ratio crédit / revenus",
+    "ANNUITY_INCOME_RATIO":              "Ratio annuité / revenus",
+    "CREDIT_ANNUITY_RATIO":              "Ratio crédit / annuité",
+    "CREDIT_GOODS_RATIO":                "Ratio crédit / prix du bien",
+    "INCOME_PER_PERSON":                 "Revenus par membre de la famille",
+    "PAYMENT_RATE":                      "Taux de remboursement (annuité/crédit)",
+    "AGE_YEARS":                         "Âge (années)",
+    "EMPLOYED_YEARS":                    "Ancienneté emploi (années)",
+    "EXT_SOURCES_MEAN":                  "Moyenne des scores externes",
+    "EXT_SOURCES_STD":                   "Écart-type des scores externes",
+    "EXT_SOURCES_MIN":                   "Minimum des scores externes",
+    "EXT_SOURCES_MAX":                   "Maximum des scores externes",
+    "EXT_SOURCE_1_EXT_SOURCE_2":         "Score ext. 1 × Score ext. 2",
+    "EXT_SOURCE_1_EXT_SOURCE_3":         "Score ext. 1 × Score ext. 3",
+    "EXT_SOURCE_2_EXT_SOURCE_3":         "Score ext. 2 × Score ext. 3",
+    "EXT_SOURCE_1_EXT_SOURCE_2_EXT_SOURCE_3": "Score ext. 1 × 2 × 3",
+    "DAYS_EMPLOYED_PERC":                "% ancienneté emploi / âge",
+    "INCOME_CREDIT_PERC":                "% revenus / crédit",
+    "INCOME_PER_CHILD":                  "Revenus par enfant",
+    "ANNUITY_LENGTH":                    "Durée du prêt estimée (années)",
+}
+
+
+def get_label(col: str) -> str:
+    """Retourne le libellé lisible d'une colonne, ou le nom brut si inconnu."""
+    return FEATURE_LABELS.get(col, col.replace("_", " ").title())
+
+
+def get_label_with_raw(col: str) -> str:
+    """Libellé lisible + nom technique entre parenthèses."""
+    friendly = FEATURE_LABELS.get(col)
+    if friendly:
+        return f"{friendly}  <span style=\'font-size:0.7em;color:#6b7280\'>[{col}]</span>"
+    return col.replace("_", " ").title()
+
 
 # ─────────────────────────────────────────────
 # Config page
@@ -157,10 +305,12 @@ PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
     font=dict(family="DM Mono, monospace", color="#9ca3af", size=11),
-    margin=dict(l=10, r=10, t=30, b=10),
-    xaxis=dict(gridcolor="#1e2028", zerolinecolor="#2d3040"),
-    yaxis=dict(gridcolor="#1e2028", zerolinecolor="#2d3040"),
 )
+
+# Defaults séparés pour éviter les conflits de keyword args dans update_layout
+DEFAULT_MARGIN = dict(l=10, r=10, t=30, b=10)
+DEFAULT_XAXIS  = dict(gridcolor="#1e2028", zerolinecolor="#2d3040")
+DEFAULT_YAXIS  = dict(gridcolor="#1e2028", zerolinecolor="#2d3040")
 
 COLOR_ACCEPT = "#22c55e"
 COLOR_REJECT = "#ef4444"
@@ -179,8 +329,13 @@ def get_shap_cols(df: pd.DataFrame) -> list[str]:
 
 
 def feature_name(shap_col: str) -> str:
-    """shap_EXT_SOURCE_3 → EXT_SOURCE_3"""
+    """shap_EXT_SOURCE_3 → EXT_SOURCE_3 (nom technique)"""
     return re.sub(r"^shap_", "", shap_col)
+
+
+def feature_label(shap_col: str) -> str:
+    """shap_EXT_SOURCE_3 → libellé lisible depuis FEATURE_LABELS."""
+    return get_label(feature_name(shap_col))
 
 
 # ─────────────────────────────────────────────
@@ -323,7 +478,8 @@ with col_metrics:
         },
         title={"text": "PROBABILITÉ DE DÉFAUT", "font": {"size": 9, "color": "#6b7280", "family": "DM Mono"}},
     ))
-    fig_gauge.update_layout(**PLOTLY_LAYOUT, height=200, margin=dict(l=20, r=20, t=40, b=0))
+    fig_gauge.update_layout(**PLOTLY_LAYOUT, height=200)
+    fig_gauge.update_layout(margin=dict(l=20, r=20, t=40, b=0))
     st.plotly_chart(fig_gauge, use_container_width=True)
 
 # ─────────────────────────────────────────────
@@ -333,7 +489,7 @@ with col_metrics:
 if shap_cols:
     st.markdown('<p class="section-title">📊 Analyse locale SHAP — contribution des features</p>', unsafe_allow_html=True)
 
-    shap_values = {feature_name(c): float(client[c]) for c in shap_cols}
+    shap_values = {feature_label(c): float(client[c]) for c in shap_cols}
     shap_sorted = dict(sorted(shap_values.items(), key=lambda x: x[1]))
 
     features = list(shap_sorted.keys())
@@ -357,13 +513,15 @@ if shap_cols:
 
     fig_shap.update_layout(
         **PLOTLY_LAYOUT,
+        margin=DEFAULT_MARGIN,
+        xaxis=DEFAULT_XAXIS,
+        yaxis=dict(gridcolor="#1e2028", zerolinecolor="#2d3040", tickfont=dict(size=10)),
         height=420,
         title=dict(
             text="<span style='font-size:10px;color:#6b7280'>Rouge = pousse vers DÉFAUT · Vert = pousse vers NON-DÉFAUT</span>",
             x=0, font=dict(size=10)
         ),
         xaxis_title="Valeur SHAP",
-        yaxis=dict(gridcolor="#1e2028", zerolinecolor="#2d3040", tickfont=dict(size=10)),
     )
     st.plotly_chart(fig_shap, use_container_width=True)
 else:
@@ -375,162 +533,65 @@ else:
 
 st.markdown('<p class="section-title">📈 Position du client parmi l\'ensemble des prédictions</p>', unsafe_allow_html=True)
 
-col_hist, col_scatter = st.columns(2, gap="large")
+fig_hist = go.Figure()
 
-# ── Histogramme distribution probabilités ──
-with col_hist:
-    fig_hist = go.Figure()
+df_acc = df[df["predicted_label"] == 0]
+df_rej = df[df["predicted_label"] == 1]
 
-    # Distribution acceptés
-    df_acc = df[df["predicted_label"] == 0]
-    df_rej = df[df["predicted_label"] == 1]
+fig_hist.add_trace(go.Histogram(
+    x=df_acc["proba"],
+    name="Acceptés",
+    marker_color=COLOR_ACCEPT,
+    opacity=0.55,
+    nbinsx=50,
+    hovertemplate="Proba : %{x:.2f}<br>Nb : %{y}<extra>Acceptés</extra>",
+))
+fig_hist.add_trace(go.Histogram(
+    x=df_rej["proba"],
+    name="Rejetés",
+    marker_color=COLOR_REJECT,
+    opacity=0.55,
+    nbinsx=50,
+    hovertemplate="Proba : %{x:.2f}<br>Nb : %{y}<extra>Rejetés</extra>",
+))
 
-    fig_hist.add_trace(go.Histogram(
-        x=df_acc["proba"],
-        name="Acceptés",
-        marker_color=COLOR_ACCEPT,
-        opacity=0.55,
-        nbinsx=40,
-        hovertemplate="Proba : %{x:.2f}<br>Nb : %{y}<extra>Acceptés</extra>",
-    ))
-    fig_hist.add_trace(go.Histogram(
-        x=df_rej["proba"],
-        name="Rejetés",
-        marker_color=COLOR_REJECT,
-        opacity=0.55,
-        nbinsx=40,
-        hovertemplate="Proba : %{x:.2f}<br>Nb : %{y}<extra>Rejetés</extra>",
-    ))
+fig_hist.add_vline(
+    x=proba,
+    line_color=COLOR_HIGHLIGHT,
+    line_width=2,
+    line_dash="dash",
+    annotation_text=f"  Client #{int(selected_id)}",
+    annotation_font=dict(color=COLOR_HIGHLIGHT, size=11),
+    annotation_position="top right",
+)
 
-    # Position du client
-    fig_hist.add_vline(
-        x=proba,
-        line_color=COLOR_HIGHLIGHT,
-        line_width=2,
-        line_dash="dash",
-        annotation_text=f"  Client #{int(selected_id)}",
-        annotation_font=dict(color=COLOR_HIGHLIGHT, size=10),
-        annotation_position="top right",
-    )
+fig_hist.add_vline(
+    x=0.434,
+    line_color="#6b7280",
+    line_width=1,
+    line_dash="dot",
+    annotation_text="  Seuil 0.434",
+    annotation_font=dict(color="#6b7280", size=10),
+    annotation_position="top left",
+)
 
-    # Seuil
-    fig_hist.add_vline(
-        x=0.434,
-        line_color="#6b7280",
-        line_width=1,
-        line_dash="dot",
-        annotation_text="  Seuil 0.434",
-        annotation_font=dict(color="#6b7280", size=9),
-        annotation_position="top left",
-    )
-
-    fig_hist.update_layout(
-        **PLOTLY_LAYOUT,
-        barmode="overlay",
-        height=350,
-        title=dict(text="Distribution des probabilités de défaut", font=dict(size=11, color="#9ca3af")),
-        xaxis_title="Probabilité de défaut",
-        yaxis_title="Nombre de clients",
-        legend=dict(
-            bgcolor="rgba(0,0,0,0)",
-            font=dict(size=10, color="#9ca3af"),
-            x=0.6, y=0.95,
-        ),
-    )
-    st.plotly_chart(fig_hist, use_container_width=True)
-
-# ── Scatter plot top-2 features SHAP ──
-with col_scatter:
-    if shap_cols and len(shap_cols) >= 2:
-        # On prend les 2 features avec le plus grand |shap| moyen → les plus informatives
-        mean_abs = {feature_name(c): df[c].abs().mean() for c in shap_cols}
-        top2 = sorted(mean_abs, key=mean_abs.get, reverse=True)[:2]
-        feat_x, feat_y = top2[0], top2[1]
-
-        # Vérifier que ces features existent dans le df (pas les colonnes shap_ mais les vraies)
-        has_feat_x = feat_x in df.columns
-        has_feat_y = feat_y in df.columns
-
-        if has_feat_x and has_feat_y:
-            fig_scatter = px.scatter(
-                df,
-                x=feat_x,
-                y=feat_y,
-                color="predicted_label",
-                color_discrete_map={0: COLOR_ACCEPT, 1: COLOR_REJECT},
-                opacity=0.35,
-                labels={
-                    "predicted_label": "Décision",
-                    feat_x: feat_x,
-                    feat_y: feat_y,
-                },
-                hover_data={"SK_ID_CURR": True, "proba": ":.3f"},
-            )
-
-            # Point du client sélectionné
-            fig_scatter.add_trace(go.Scatter(
-                x=[client[feat_x]],
-                y=[client[feat_y]],
-                mode="markers",
-                marker=dict(
-                    color=COLOR_HIGHLIGHT,
-                    size=14,
-                    symbol="star",
-                    line=dict(color="#fff", width=1),
-                ),
-                name=f"Client #{int(selected_id)}",
-                hovertemplate=f"<b>Client #{int(selected_id)}</b><br>{feat_x}: %{{x:.3f}}<br>{feat_y}: %{{y:.3f}}<extra></extra>",
-            ))
-
-            fig_scatter.update_layout(
-                **PLOTLY_LAYOUT,
-                height=350,
-                title=dict(
-                    text=f"Position · {feat_x} vs {feat_y}",
-                    font=dict(size=11, color="#9ca3af"),
-                ),
-                legend=dict(
-                    bgcolor="rgba(0,0,0,0)",
-                    font=dict(size=10, color="#9ca3af"),
-                ),
-            )
-            st.plotly_chart(fig_scatter, use_container_width=True)
-
-        else:
-            # Fallback : scatter proba vs rang
-            df_sorted = df.sort_values("proba").reset_index(drop=True)
-            client_rank = df_sorted[df_sorted["SK_ID_CURR"] == selected_id].index[0]
-
-            fig_scatter = go.Figure()
-            fig_scatter.add_trace(go.Scatter(
-                x=df_sorted.index,
-                y=df_sorted["proba"],
-                mode="markers",
-                marker=dict(
-                    color=df_sorted["predicted_label"].map({0: COLOR_ACCEPT, 1: COLOR_REJECT}),
-                    size=3,
-                    opacity=0.4,
-                ),
-                name="Clients",
-                hovertemplate="Rang : %{x}<br>Proba : %{y:.3f}<extra></extra>",
-            ))
-            fig_scatter.add_trace(go.Scatter(
-                x=[client_rank],
-                y=[proba],
-                mode="markers",
-                marker=dict(color=COLOR_HIGHLIGHT, size=12, symbol="star"),
-                name=f"Client #{int(selected_id)}",
-            ))
-            fig_scatter.update_layout(
-                **PLOTLY_LAYOUT,
-                height=350,
-                title=dict(text="Probabilité de défaut · rang dans la population", font=dict(size=11, color="#9ca3af")),
-                xaxis_title="Rang (trié par proba)",
-                yaxis_title="Probabilité de défaut",
-            )
-            st.plotly_chart(fig_scatter, use_container_width=True)
-    else:
-        st.info("Pas assez de colonnes SHAP pour le scatter.")
+fig_hist.update_layout(
+    **PLOTLY_LAYOUT,
+    margin=DEFAULT_MARGIN,
+    xaxis=DEFAULT_XAXIS,
+    yaxis=DEFAULT_YAXIS,
+    barmode="overlay",
+    height=480,
+    title=dict(text="Distribution des probabilités de défaut", font=dict(size=12, color="#9ca3af")),
+    xaxis_title="Probabilité de défaut",
+    yaxis_title="Nombre de clients",
+    legend=dict(
+        bgcolor="rgba(0,0,0,0)",
+        font=dict(size=11, color="#9ca3af"),
+        x=0.75, y=0.95,
+    ),
+)
+st.plotly_chart(fig_hist, use_container_width=True)
 
 # ─────────────────────────────────────────────
 # Row 4 — Tableau récap client
@@ -540,7 +601,7 @@ st.markdown('<p class="section-title">📋 Détail des valeurs SHAP du client</p
 
 if shap_cols:
     recap = pd.DataFrame({
-        "Feature": [feature_name(c) for c in shap_cols],
+        "Feature": [f"{feature_label(c)}  [{feature_name(c)}]" for c in shap_cols],
         "Valeur SHAP": [round(float(client[c]), 4) for c in shap_cols],
         "Impact": ["⬆ Défaut" if float(client[c]) > 0 else "⬇ Non-défaut" for c in shap_cols],
     }).sort_values("Valeur SHAP", key=abs, ascending=False).reset_index(drop=True)
