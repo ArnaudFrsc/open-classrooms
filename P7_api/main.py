@@ -31,6 +31,12 @@ from fastapi.responses import StreamingResponse
 MODELS_DIR = os.getenv("MODELS_DIR", "models")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))   # lignes par batch pour le streaming
 
+print(f"CWD: {os.getcwd()}")
+print(f"MODELS_DIR: {MODELS_DIR}")
+print(f"Exists: {os.path.isdir(MODELS_DIR)}")
+if os.path.isdir(MODELS_DIR):
+    print(f"Contents: {os.listdir(MODELS_DIR)}")
+
 ID_COLUMN = "SK_ID_CURR"   # colonne identifiant client — jamais droppée
 
 AVAILABLE_MODELS: dict[str, object] = {}
