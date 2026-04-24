@@ -1,0 +1,32 @@
+{
+  "zero_shot": {
+    "mode": "zero_shot",
+    "model": "llama3.1:8b",
+    "n_samples": 200,
+    "top_k": 3,
+    "accuracy_at_k": 0.725,
+    "top1_accuracy": 0.51,
+    "mrr_at_k": 0.5999999999999998,
+    "empty_predictions": 0,
+    "time_seconds": 368.5,
+    "seconds_per_article": 1.84
+  },
+  "few_shot": {
+    "mode": "few_shot",
+    "model": "llama3.1:8b",
+    "n_samples": 200,
+    "top_k": 3,
+    "accuracy_at_k": 0.73,
+    "top1_accuracy": 0.53,
+    "mrr_at_k": 0.6091666666666664,
+    "empty_predictions": 0,
+    "time_seconds": 323.9,
+    "seconds_per_article": 1.62
+  },
+  "config": {
+    "model": "llama3.1:8b",
+    "eval_sample_size": 200,
+    "top_k": 3,
+    "n_categories": 31
+  }
+}

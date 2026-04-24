@@ -13,5 +13,18 @@ mlruns/
 *.db
 
 *.png
+*.jpg
 
 *.parquet
+
+# special heavy paths
+P9/fruits/
+P9/Results/
+P9/pca2/
+P9/notebook_cloud.ipynb
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+*.pdf
+
