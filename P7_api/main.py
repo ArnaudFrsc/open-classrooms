@@ -51,8 +51,12 @@ for model_name, filename in [
         loaded_model = joblib.load(path)
         AVAILABLE_MODELS[model_name] = loaded_model
         # Pré-construction de l'explainer SHAP (TreeExplainer — compatible LGB & XGB)
+        # Si le modèle est un Pipeline, on extrait l'estimateur final (le vrai arbre)
         try:
-            SHAP_EXPLAINERS[model_name] = shap.TreeExplainer(loaded_model)
+            shap_model = loaded_model
+            if hasattr(loaded_model, "named_steps"):
+                shap_model = list(loaded_model.named_steps.values())[-1]
+            SHAP_EXPLAINERS[model_name] = shap.TreeExplainer(shap_model)
             print(f"✅ Modèle '{model_name}' + explainer SHAP chargés depuis {path}")
         except Exception as e:
             print(f"⚠️  Modèle '{model_name}' chargé mais explainer SHAP non disponible : {e}")
@@ -173,6 +177,29 @@ def _predict_full(model, df_clean: pd.DataFrame, threshold: float) -> tuple[np.n
         raise HTTPException(status_code=500, detail=f"Erreur lors de la prédiction : {e}")
     labels = (probas >= threshold).astype(int)
     return labels, probas
+
+
+def _transform_for_shap(model_obj, df_aligned: pd.DataFrame) -> pd.DataFrame:
+    """
+    Pour un Pipeline, applique les transformers (imputer, etc.) mais ignore
+    les resamplers (SMOTE) qui n'ont pas de sens à l'inférence.
+    Retourne un DataFrame prêt pour TreeExplainer.
+    """
+    if not hasattr(model_obj, "named_steps"):
+        return df_aligned
+    try:
+        from imblearn.base import SamplerMixin
+        is_sampler = lambda step: isinstance(step, SamplerMixin)
+    except ImportError:
+        is_sampler = lambda step: False
+
+    X = df_aligned.values.copy()
+    steps = list(model_obj.named_steps.items())[:-1]  # tout sauf l'estimateur final
+    for _, step in steps:
+        if is_sampler(step):
+            continue
+        X = step.transform(X)
+    return pd.DataFrame(X, columns=df_aligned.columns, index=df_aligned.index)
 
 
 def _compute_shap_top10(
@@ -509,10 +536,11 @@ def predict_explain(
         raise HTTPException(status_code=500, detail=f"Erreur lors de la prédiction : {e}")
     labels = (probas >= threshold).astype(int)
 
-    # Calcul SHAP top-N
+    # Calcul SHAP top-N (données transformées sans SMOTE pour le TreeExplainer)
+    df_for_shap = _transform_for_shap(AVAILABLE_MODELS[model], df_aligned)
     shap_df = _compute_shap_top10(
         explainer=SHAP_EXPLAINERS[model],
-        df_aligned=df_aligned,
+        df_aligned=df_for_shap,
         feature_names=feature_names,
         n_top=n_top,
     )
