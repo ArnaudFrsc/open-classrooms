@@ -1,9 +1,3 @@
-# TODO : Ajouter le pré-traitement des données d'entrée (ex: encodage des variables catégorielles) avant de les envoyer à l'API.
-
-# Code type : ->
-# train.columns = train.columns.str.replace(r'[^0-9a-zA-Z_]', '_', regex=True)
-# api_test_sample = train[cols_kept][:30]
-
 """
 Client Python pour l'API ML
 Supporte trois routes :
@@ -55,7 +49,7 @@ INPUT_FILE   = f'{ROOT_DIR}\\api_test_sample.csv'       # Fichier CSV ou Excel
 OUTPUT_FILE  = f'{P8_DIR}\\predictions.csv'           # Fichier de sortie (None = nom auto)
 
 MODEL        = "lgb"     # "lgb" ou "xgb"
-THRESHOLD    = 0.434     # Seuil de décision (0.0 → 1.0)
+THRESHOLD    = 0.3646     # Seuil de décision (0.0 → 1.0)
 RETURN_PROBA = True      # True = ajoute une colonne 'proba'
 N_TOP_SHAP   = 10        # Nombre de features SHAP (route /explain uniquement)
 
@@ -79,7 +73,7 @@ def predict_direct(output_file: str | None = None) -> None:
     """Appelle /predict et sauvegarde le fichier retourné directement."""
     filepath = Path(INPUT_FILE)
     if not filepath.exists():
-        print(f"❌ Fichier introuvable : {filepath}")
+        print(f"Fichier introuvable : {filepath}")
         sys.exit(1)
 
     url = f"{API_URL.rstrip('/')}/predict"
@@ -101,12 +95,12 @@ def predict_direct(output_file: str | None = None) -> None:
         )
 
     if response.status_code != 200:
-        print(f"❌ Erreur HTTP {response.status_code} : {response.text}")
+        print(f"Erreur HTTP {response.status_code} : {response.text}")
         sys.exit(1)
 
     out_path = output_file or OUTPUT_FILE
     Path(out_path).write_bytes(response.content)
-    print(f"✅ Fichier sauvegardé : {out_path}")
+    print(f"Fichier sauvegardé : {out_path}")
 
 
 # ─────────────────────────────────────────────
@@ -117,7 +111,7 @@ def predict_with_progress(output_file: str | None = None) -> None:
     """Appelle /predict/stream et affiche une barre tqdm en temps réel."""
     filepath = Path(INPUT_FILE)
     if not filepath.exists():
-        print(f"❌ Fichier introuvable : {filepath}")
+        print(f"Fichier introuvable : {filepath}")
         sys.exit(1)
 
     url = f"{API_URL.rstrip('/')}/predict/stream"
@@ -140,7 +134,7 @@ def predict_with_progress(output_file: str | None = None) -> None:
         )
 
     if response.status_code != 200:
-        print(f"❌ Erreur HTTP {response.status_code} : {response.text}")
+        print(f"Erreur HTTP {response.status_code} : {response.text}")
         sys.exit(1)
 
     _consume_sse(response, output_file or OUTPUT_FILE)
@@ -158,7 +152,7 @@ def predict_explain(output_file: str | None = None) -> None:
     """
     filepath = Path(INPUT_FILE)
     if not filepath.exists():
-        print(f"❌ Fichier introuvable : {filepath}")
+        print(f"Fichier introuvable : {filepath}")
         sys.exit(1)
 
     url = f"{API_URL.rstrip('/')}/predict/explain"
@@ -182,7 +176,7 @@ def predict_explain(output_file: str | None = None) -> None:
         )
 
     if response.status_code != 200:
-        print(f"❌ Erreur HTTP {response.status_code} : {response.text}")
+        print(f"Erreur HTTP {response.status_code} : {response.text}")
         sys.exit(1)
 
     # Détermination du nom de sortie depuis le header Content-Disposition si OUTPUT_FILE est None
@@ -192,7 +186,7 @@ def predict_explain(output_file: str | None = None) -> None:
         out_path = _extract_filename(cd) or "explained.csv"
 
     Path(out_path).write_bytes(response.content)
-    print(f"✅ Fichier SHAP sauvegardé : {out_path}")
+    print(f"Fichier SHAP sauvegardé : {out_path}")
     print(f"   Colonnes disponibles : SK_ID_CURR, predicted_label, proba, shap_<feature> × {N_TOP_SHAP}")
 
 
@@ -244,13 +238,13 @@ def _consume_sse(response: requests.Response, out_filename: str) -> None:
                 file_bytes = base64.b64decode(payload["file_b64"])
                 Path(out_filename).write_bytes(file_bytes)
 
-                print(f"\n✅ Terminé en {payload['elapsed']}s — {payload['total']} lignes traitées")
+                print(f"\nTerminé en {payload['elapsed']}s — {payload['total']} lignes traitées")
                 print(f"💾 Fichier sauvegardé : {out_filename}")
 
             elif event_name == "error":
                 if pbar:
                     pbar.close()
-                print(f"\n❌ Erreur API : {payload['detail']}")
+                print(f"\nErreur API : {payload['detail']}")
                 sys.exit(1)
 
 

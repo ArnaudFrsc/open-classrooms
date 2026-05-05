@@ -1,7 +1,7 @@
 import sqlite3
 import pandas as pd
 
-FP = r"C:\Users\jfurs\@Python\OpenClassrooms\DS\P5\olist.db"
+FP = r"C:\Users\jfurs\Pythonn\OpenClassrooms\DS\P5\olist.db"
 
 ########## Requests to a SQLite Database asked by Fernanda ##########
 
