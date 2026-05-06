@@ -29,65 +29,159 @@ API_COLS = ["SK_ID_CURR"] + _feature_cols
 # Labels lisibles des features
 # ─────────────────────────────────────────────
 
+# ============================================================
+# Dictionnaire de traduction des features - Home Credit Default Risk
+# ============================================================
+# Sources :
+#   [O] = HomeCredit_columns_description.csv (officiel Kaggle)
+#   [A] = Convention d'agrégation issue des kernels Kaggle (Aguiar et al.)
+#   [D] = Feature dérivée custom — traduction inférée du nom
+# ============================================================
+
 FEATURE_LABELS: dict[str, str] = {
-    "SK_ID_CURR": "ID Client",
+
+    # ---- Identité / démographie [O] ----
     "CODE_GENDER": "Genre",
-    "FLAG_OWN_CAR": "Possède une voiture",
-    "FLAG_OWN_REALTY": "Possède un bien immobilier",
     "CNT_CHILDREN": "Nombre d'enfants",
-    "NAME_CONTRACT_TYPE": "Type de contrat",
-    "NAME_INCOME_TYPE": "Type de revenus",
-    "NAME_EDUCATION_TYPE": "Niveau d'éducation",
-    "NAME_FAMILY_STATUS": "Situation familiale",
-    "NAME_HOUSING_TYPE": "Type de logement",
-    "OCCUPATION_TYPE": "Profession",
-    "ORGANIZATION_TYPE": "Type d'organisation employeur",
-    "HOUR_APPR_PROCESS_START": "Heure de la demande",
-    "REG_CITY_NOT_LIVE_CITY": "Ville enregistrée ≠ ville de résidence",
-    "REG_CITY_NOT_WORK_CITY": "Ville enregistrée ≠ ville de travail",
-    "EMERGENCYSTATE_MODE": "État d'urgence du logement",
-    "FONDKAPREMONT_MODE": "Mode rénovation Fondkapremont",
-    "HOUSETYPE_MODE": "Type de maison (mode)",
-    "WALLSMATERIAL_MODE": "Matériau des murs (mode)",
-    "AMT_INCOME_TOTAL": "Revenus annuels totaux",
-    "AMT_CREDIT": "Montant du crédit demandé",
-    "AMT_ANNUITY": "Montant de l'annuité",
-    "AMT_GOODS_PRICE": "Prix du bien financé",
-    "AMT_REQ_CREDIT_BUREAU_MON": "Demandes bureau crédit (dernier mois)",
-    "AMT_REQ_CREDIT_BUREAU_YEAR": "Demandes bureau crédit (dernière année)",
-    "EXT_SOURCE_1": "Score externe 1",
-    "EXT_SOURCE_2": "Score externe 2",
-    "EXT_SOURCE_3": "Score externe 3",
-    "DAYS_BIRTH": "Âge (jours depuis naissance)",
-    "DAYS_EMPLOYED": "Ancienneté emploi (jours)",
-    "DAYS_ID_PUBLISH": "Jours depuis renouvellement pièce d'identité",
-    "FLAG_DOCUMENT_3": "Document 3 fourni",
-    "FLAG_DOCUMENT_6": "Document 6 fourni",
-    "FLAG_DOCUMENT_8": "Document 8 fourni",
-    "FLAG_DOCUMENT_13": "Document 13 fourni",
-    "FLAG_DOCUMENT_14": "Document 14 fourni",
-    "FLAG_DOCUMENT_15": "Document 15 fourni",
-    "FLAG_DOCUMENT_16": "Document 16 fourni",
-    "FLAG_DOCUMENT_18": "Document 18 fourni",
-    "FLAG_EMAIL": "Email fourni",
-    "FLAG_PHONE": "Téléphone fixe fourni",
-    "REGION_POPULATION_RELATIVE": "Population relative de la région",
-    "REGION_RATING_CLIENT": "Note de la région client (1–3)",
-    "REGION_RATING_CLIENT_W_CITY": "Note de la région client (avec ville)",
     "CNT_FAM_MEMBERS": "Nombre de membres de la famille",
-    "OBS_30_CNT_SOCIAL_CIRCLE": "Contacts observés défaut 30j (entourage)",
-    "DEF_30_CNT_SOCIAL_CIRCLE": "Contacts en défaut 30j (entourage)",
-    "DEF_60_CNT_SOCIAL_CIRCLE": "Contacts en défaut 60j (entourage)",
-    "CREDIT_INCOME_RATIO": "Ratio crédit / revenus",
-    "ANNUITY_INCOME_RATIO": "Ratio annuité / revenus",
-    "ANNUITY_CREDIT_RATIO": "Ratio annuité / crédit",
-    "CREDIT_GOODS_RATIO": "Ratio crédit / prix du bien",
+    "NAME_EDUCATION_TYPE": "Niveau d'études",
+    "FLAG_OWN_CAR": "Propriétaire d'une voiture",
+
+    # ---- Temporalité (en jours, négatif = passé) [O] ----
+    "DAYS_EMPLOYED": "Ancienneté dans l'emploi (jours avant la demande)",
+    "DAYS_LAST_PHONE_CHANGE": "Jours depuis le dernier changement de téléphone",
+    "ID_PUBLISH_YEARS": "Ancienneté de la pièce d'identité (années)",  # [D]
+    "RECENT_PHONE_CHANGE": "Changement de téléphone récent (flag)",     # [D]
+    "RECENT_ID_CHANGE": "Changement de pièce d'identité récent (flag)", # [D]
+    "HOUR_APPR_PROCESS_START": "Heure de dépôt de la demande",
+
+    # ---- Scores externes [O] ----
+    # Sources externes normalisées (non documentées par Kaggle)
+    "EXT_SOURCE_2": "Score externe 2 (source normalisée)",
+    "EXT_SOURCE_3": "Score externe 3 (source normalisée)",
+
+    # ---- Contacts / documents [O] ----
+    "FLAG_PHONE": "Téléphone fixe fourni",
+    "FLAG_EMAIL": "Adresse e-mail fournie",
+    "FLAG_DOCUMENT_6": "Document 6 fourni",
+    "DOCUMENT_COUNT": "Nombre total de documents fournis",  # [D]
+
+    # ---- Crédit demandé [O] ----
+    "AMT_CREDIT": "Montant du crédit demandé",
+    "AMT_GOODS_PRICE": "Prix du bien financé",
+    "AMT_ANNUITY": "Montant de l'annuité",
+    "NAME_CONTRACT_TYPE_Revolving_loans": "Type de contrat : Crédit renouvelable",
+
+    # ---- Ratios métier [D] (formules confirmées via kernels publics) ----
     "EMPLOYED_TO_AGE_RATIO": "Ratio ancienneté emploi / âge",
-    "PHONE_CHANGE_YEARS": "Changement téléphone (années)",
-    "RECENT_PHONE_CHANGE": "Changement récent de téléphone",
-    "RECENT_ID_CHANGE": "Changement récent d'identité",
-    "REGISTRATION_YEARS": "Années depuis enregistrement",
-    "DOCUMENT_COUNT": "Nombre de documents fournis",
+    "CREDIT_GOODS_RATIO": "Ratio crédit / prix du bien",
+    "ANNUITY_INCOME_RATIO": "Ratio annuité / revenu (effort financier)",
+    "ANNUITY_CREDIT_RATIO": "Ratio annuité / crédit (durée implicite)",
+
+    # ---- Région / logement [O] ----
+    "REGION_RATING_CLIENT": "Note de la région du client",
+    "REGION_RATING_CLIENT_W_CITY": "Note de la région (avec ville)",
+    "REGION_POPULATION_RELATIVE": "Densité de population relative de la région",
+    "REG_CITY_NOT_LIVE_CITY": "Adresse d'enregistrement ≠ adresse de résidence",
+    "REG_CITY_NOT_WORK_CITY": "Adresse d'enregistrement ≠ adresse professionnelle",
+
+    # ---- Statut familial [O] ----
+    "NAME_FAMILY_STATUS_Married": "Statut familial : Marié(e)",
+    "NAME_FAMILY_STATUS_Single___not_married": "Statut familial : Célibataire",
+    "NAME_FAMILY_STATUS_Civil_marriage": "Statut familial : Union civile",
+
+    # ---- Type de logement [O] ----
+    "NAME_HOUSING_TYPE_House___apartment": "Logement : Maison / Appartement",
+    "NAME_HOUSING_TYPE_With_parents": "Logement : Chez les parents",
+    "NAME_HOUSING_TYPE_Rented_apartment": "Logement : Appartement loué",
+    "HOUSETYPE_MODE_block_of_flats": "Type d'habitat : Immeuble collectif",
+    "HOUSETYPE_MODE_nan": "Type d'habitat : Non renseigné",
+    "WALLSMATERIAL_MODE_Panel": "Matériau des murs : Panneaux",
+    "WALLSMATERIAL_MODE_nan": "Matériau des murs : Non renseigné",
+    "EMERGENCYSTATE_MODE_No": "Bâtiment en état d'urgence : Non",
+    "EMERGENCYSTATE_MODE_nan": "Bâtiment en état d'urgence : Non renseigné",
+    "FONDKAPREMONT_MODE_nan": "Fonds de rénovation : Non renseigné",
+    "FONDKAPREMONT_MODE_reg_oper_account": "Fonds de rénovation : Compte régulier",
+
+    # ---- Type de revenus [O] ----
+    "NAME_INCOME_TYPE_State_servant": "Type de revenu : Fonctionnaire",
+    "NAME_INCOME_TYPE_Commercial_associate": "Type de revenu : Salarié du privé",
+
+    # ---- Profession [O] ----
+    "OCCUPATION_TYPE_nan": "Profession : Non renseignée",
+    "OCCUPATION_TYPE_Core_staff": "Profession : Personnel administratif",
+    "OCCUPATION_TYPE_Managers": "Profession : Cadres / Managers",
+    "OCCUPATION_TYPE_Accountants": "Profession : Comptables",
+    "OCCUPATION_TYPE_High_skill_tech_staff": "Profession : Personnel technique qualifié",
+    "OCCUPATION_TYPE_Medicine_staff": "Profession : Personnel médical",
+    "OCCUPATION_TYPE_Low_skill_Laborers": "Profession : Ouvriers non qualifiés",
+    "OCCUPATION_TYPE_Drivers": "Profession : Chauffeurs",
+
+    # ---- Employeur [O] ----
+    "ORGANIZATION_TYPE_School": "Employeur : École",
+    "ORGANIZATION_TYPE_Medicine": "Employeur : Secteur médical",
+    "ORGANIZATION_TYPE_Government": "Employeur : Gouvernement",
+    "ORGANIZATION_TYPE_Kindergarten": "Employeur : École maternelle",
+    "ORGANIZATION_TYPE_Police": "Employeur : Police",
+    "ORGANIZATION_TYPE_Self_employed": "Employeur : Indépendant",
+    "ORGANIZATION_TYPE_Military": "Employeur : Armée",
+    "ORGANIZATION_TYPE_Security_Ministries": "Employeur : Ministères de la sécurité",
+    "ORGANIZATION_TYPE_Other": "Employeur : Autre",
+
+    # ---- Cercle social (défauts dans l'entourage) [O] ----
+    "DEF_30_CNT_SOCIAL_CIRCLE": "Défauts à 30 jours dans l'entourage",
+    "DEF_60_CNT_SOCIAL_CIRCLE": "Défauts à 60 jours dans l'entourage",
+
+    # ---- Requêtes au bureau de crédit [O] ----
+    "AMT_REQ_CREDIT_BUREAU_MON": "Requêtes au bureau de crédit (dernier mois)",
+    "AMT_REQ_CREDIT_BUREAU_YEAR": "Requêtes au bureau de crédit (dernière année)",
+
+    # =========================================================
+    # === Agrégations [A] : préfixe = source, suffixe = stat ===
+    # =========================================================
+
+    # ---- BURO : tous les crédits du bureau (actifs + clôturés) ----
+    "BURO_DAYS_CREDIT_MIN": "Bureau - Crédit le plus récent (jours, min)",
+    "BURO_DAYS_CREDIT_MEAN": "Bureau - Ancienneté moyenne des crédits (jours)",
+    "BURO_DAYS_CREDIT_MAX": "Bureau - Crédit le plus ancien (jours, max)",
+    "BURO_DAYS_CREDIT_ENDDATE_MIN": "Bureau - Date de fin de crédit la plus proche (jours)",
+    "BURO_AMT_CREDIT_SUM_SUM": "Bureau - Somme totale des montants de crédit",
+    "BURO_AMT_CREDIT_SUM_MEAN": "Bureau - Montant moyen de crédit",
+    "BURO_AMT_CREDIT_SUM_DEBT_SUM": "Bureau - Dette totale en cours",
+    "BURO_AMT_CREDIT_SUM_DEBT_MEAN": "Bureau - Dette moyenne en cours",
+    "BURO_AMT_CREDIT_SUM_LIMIT_SUM": "Bureau - Somme totale des limites de crédit",
+
+    # ---- CLOSED : crédits du bureau clôturés uniquement ----
+    "CLOSED_DAYS_CREDIT_MIN": "Crédits clôturés - Plus récent (jours, min)",
+    "CLOSED_DAYS_CREDIT_MEAN": "Crédits clôturés - Ancienneté moyenne (jours)",
+    "CLOSED_DAYS_CREDIT_MAX": "Crédits clôturés - Plus ancien (jours, max)",
+    "CLOSED_DAYS_CREDIT_ENDDATE_MAX": "Crédits clôturés - Fin la plus récente (jours)",
+    "CLOSED_DAYS_CREDIT_ENDDATE_MEAN": "Crédits clôturés - Date moyenne de fin (jours)",
+    "CLOSED_AMT_CREDIT_SUM_MEAN": "Crédits clôturés - Montant moyen",
+    "CLOSED_AMT_CREDIT_SUM_SUM": "Crédits clôturés - Somme totale",
+    "CLOSED_AMT_CREDIT_SUM_DEBT_MEAN": "Crédits clôturés - Dette résiduelle moyenne",
+    "CLOSED_AMT_CREDIT_SUM_LIMIT_SUM": "Crédits clôturés - Somme des limites",
+
+    # ---- PREV : précédentes demandes Home Credit ----
+    "PREV_DAYS_DECISION_MEAN": "Précédents HC - Ancienneté moyenne de décision (jours)",
+    "PREV_AMT_ANNUITY_MEAN": "Précédents HC - Annuité moyenne",
+    "PREV_AMT_APPLICATION_SUM": "Précédents HC - Total des montants demandés",
+    "PREV_AMT_APPLICATION_MEAN": "Précédents HC - Montant moyen demandé",
+    "PREV_AMT_CREDIT_MEAN": "Précédents HC - Montant moyen accordé",
+    "PREV_AMT_GOODS_PRICE_MEAN": "Précédents HC - Prix moyen des biens financés",
+    "PREV_AMT_DOWN_PAYMENT_MEAN": "Précédents HC - Apport moyen",
+    "PREV_APP_CREDIT_PERC_MEAN": "Précédents HC - Ratio moyen demandé / accordé",
+    "PREV_CNT_PAYMENT_SUM": "Précédents HC - Total des échéances prévues",
+
+    # ---- POS : Point of Sale (historique mensuel) ----
+    "POS_COUNT": "POS - Nombre d'enregistrements historiques",
+    "POS_MONTHS_BALANCE_MEAN": "POS - Solde mensuel moyen (mois)",
+
+    # ---- INSTAL : historique des paiements d'échéances ----
+    "INSTAL_COUNT": "Échéances - Nombre d'échéances enregistrées",
+    "INSTAL_AMT_PAYMENT_SUM": "Échéances - Total des paiements effectués",
+    "INSTAL_AMT_PAYMENT_MEAN": "Échéances - Paiement moyen effectué",
+    "INSTAL_AMT_INSTALMENT_SUM": "Échéances - Total des montants dus",
 }
 
 # ─────────────────────────────────────────────
