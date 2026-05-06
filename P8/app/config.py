@@ -3,56 +3,27 @@ Configuration du dashboard Scoring Crédit — Home Credit
 Colonnes API, labels, styles CSS, templates HTML et constantes Plotly.
 """
 
+import json
+from pathlib import Path
+
 # ─────────────────────────────────────────────
 # API
 # ─────────────────────────────────────────────
 
 API_URL = "https://open-classrooms.onrender.com"
 MODEL = "lgb"
-DEFAULT_THRESHOLD = 0.434
+DEFAULT_THRESHOLD = 0.3646
 DEFAULT_N_TOP_SHAP = 10
 
 # ─────────────────────────────────────────────
-# Colonnes attendues par l'API
+# Colonnes attendues par l'API (chargées depuis cols_kept.json)
 # ─────────────────────────────────────────────
 
-API_COLS = [
-    "SK_ID_CURR", "DAYS_EMPLOYED", "EXT_SOURCE_2", "EXT_SOURCE_3", "FLAG_DOCUMENT_6",
-    "NAME_EDUCATION_TYPE", "EMPLOYED_TO_AGE_RATIO", "PHONE_CHANGE_YEARS", "CREDIT_GOODS_RATIO",
-    "REGION_RATING_CLIENT_W_CITY", "REGION_RATING_CLIENT", "OCCUPATION_TYPE_nan",
-    "AMT_GOODS_PRICE", "AMT_CREDIT", "FLAG_OWN_CAR", "RECENT_PHONE_CHANGE",
-    "NAME_INCOME_TYPE_State_servant", "EMERGENCYSTATE_MODE_No", "EMERGENCYSTATE_MODE_nan",
-    "HOUSETYPE_MODE_block_of_flats", "OCCUPATION_TYPE_Core_staff", "HOUSETYPE_MODE_nan",
-    "WALLSMATERIAL_MODE_nan", "NAME_INCOME_TYPE_Commercial_associate", "HOUR_APPR_PROCESS_START",
-    "NAME_FAMILY_STATUS_Married", "OCCUPATION_TYPE_Managers", "CODE_GENDER",
-    "REGION_POPULATION_RELATIVE", "NAME_CONTRACT_TYPE_Revolving_loans", "WALLSMATERIAL_MODE_Panel",
-    "OCCUPATION_TYPE_Accountants", "DEF_30_CNT_SOCIAL_CIRCLE", "DEF_60_CNT_SOCIAL_CIRCLE",
-    "REG_CITY_NOT_LIVE_CITY", "FONDKAPREMONT_MODE_nan", "AMT_ANNUITY", "ANNUITY_INCOME_RATIO",
-    "AMT_REQ_CREDIT_BUREAU_YEAR", "OCCUPATION_TYPE_Low_skill_Laborers", "ORGANIZATION_TYPE_School",
-    "FONDKAPREMONT_MODE_reg_oper_account", "NAME_FAMILY_STATUS_Single___not_married",
-    "CNT_FAM_MEMBERS", "DAYS_ID_PUBLISH", "FLAG_PHONE", "ORGANIZATION_TYPE_Medicine",
-    "OCCUPATION_TYPE_High_skill_tech_staff", "FLAG_DOCUMENT_8", "OCCUPATION_TYPE_Medicine_staff",
-    "NAME_FAMILY_STATUS_Civil_marriage", "REG_CITY_NOT_WORK_CITY", "ORGANIZATION_TYPE_Military",
-    "ORGANIZATION_TYPE_Government", "ANNUITY_CREDIT_RATIO", "AMT_REQ_CREDIT_BUREAU_MON",
-    "NAME_HOUSING_TYPE_House___apartment", "REGISTRATION_YEARS", "ORGANIZATION_TYPE_Other",
-    "FLAG_DOCUMENT_16", "NAME_HOUSING_TYPE_With_parents", "ORGANIZATION_TYPE_Kindergarten",
-    "ORGANIZATION_TYPE_Security_Ministries", "OCCUPATION_TYPE_Drivers", "ORGANIZATION_TYPE_Police",
-    "FLAG_DOCUMENT_13", "DOCUMENT_COUNT", "NAME_FAMILY_STATUS_Widow", "FLAG_DOCUMENT_18",
-    "RECENT_ID_CHANGE", "CNT_CHILDREN", "OCCUPATION_TYPE_Laborers",
-    "NAME_HOUSING_TYPE_Rented_apartment", "ORGANIZATION_TYPE_Bank",
-    "WALLSMATERIAL_MODE_Stone__brick", "FLAG_DOCUMENT_14", "ORGANIZATION_TYPE_Transport__type_3",
-    "ORGANIZATION_TYPE_Self_employed", "ORGANIZATION_TYPE_Industry__type_9",
-    "ORGANIZATION_TYPE_University", "FONDKAPREMONT_MODE_org_spec_account", "FLAG_EMAIL",
-    "FLAG_DOCUMENT_3", "ORGANIZATION_TYPE_Construction", "OBS_30_CNT_SOCIAL_CIRCLE",
-    "OCCUPATION_TYPE_Private_service_staff", "WALLSMATERIAL_MODE_Monolithic",
-    "ORGANIZATION_TYPE_Services", "ORGANIZATION_TYPE_Trade__type_6",
-    "NAME_INCOME_TYPE_Unemployed", "WALLSMATERIAL_MODE_Block",
-    "WEEKDAY_APPR_PROCESS_START_SATURDAY", "ORGANIZATION_TYPE_Restaurant",
-    "ORGANIZATION_TYPE_Business_Entity_Type_2", "FLAG_DOCUMENT_15",
-    "ORGANIZATION_TYPE_Transport__type_2", "FONDKAPREMONT_MODE_reg_oper_spec_account",
-    "NAME_HOUSING_TYPE_Office_apartment", "ORGANIZATION_TYPE_Electricity",
-    "WEEKDAY_APPR_PROCESS_START_TUESDAY", "FLAG_OWN_REALTY",
-]
+_cols_path = Path(__file__).parent / "data" / "cols_kept.json"
+with open(_cols_path) as _f:
+    _feature_cols = json.load(_f)
+
+API_COLS = ["SK_ID_CURR"] + _feature_cols
 
 # ─────────────────────────────────────────────
 # Labels lisibles des features
@@ -290,8 +261,7 @@ HTML_LANDING_INSTRUCTIONS = """
 <div style="margin-top:3rem; color:#4b5563; font-size:0.8rem; line-height:2;">
     <strong style="color:#6b7280;">1. Données clients</strong> — fichier CSV/Excel avec <code>SK_ID_CURR</code><br>
     &nbsp;&nbsp;&nbsp;→ Pour chaque client, le dashboard appellera l'API <code>/predict/explain</code><br><br>
-    <strong style="color:#6b7280;">2. Jeu d'entraînement</strong> (optionnel) — fichier <code>_explained.csv</code><br>
-    &nbsp;&nbsp;&nbsp;→ Précalculé via <code>predict_client.py</code> sur le training set<br>
+    <strong style="color:#6b7280;">2. Population de référence</strong> — chargée automatiquement au démarrage<br>
     &nbsp;&nbsp;&nbsp;→ Permet d'afficher la distribution de référence et le scatter plot
 </div>
 """
@@ -299,8 +269,8 @@ HTML_LANDING_INSTRUCTIONS = """
 HTML_TRAIN_MISSING = """
 <div style="margin-top:1rem; padding:1rem; background:#161920; border:1px solid #252830;
      border-radius:4px; font-size:0.8rem; color:#6b7280;">
-    📈 Chargez le fichier d'entraînement (précalculé) dans la barre latérale pour afficher
-    la distribution de référence et le scatter plot.
+    📈 Fichier de référence introuvable — relancez <code>generate_reference_comparaison.py</code>
+    pour générer la population de référence.
 </div>
 """
 
