@@ -3,12 +3,10 @@ Tests unitaires pour l'API de prédiction binaire (main.py)
 Périmètre : route /predict/explain, routes de santé, et fonctions utilitaires.
 
 Exécution :
-    pytest test_main.py -v
-    pytest test_main.py -v --cov=main   (avec couverture)
+    pytest tests_unitaires.py -v
 """
 
 import io
-import json
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -23,12 +21,11 @@ from main import (
     _extract_id_column,
     _get_expected_features,
     _serialize,
-    _sse,
     _validate_and_align,
 )
 
 # ─────────────────────────────────────────────
-# Fixtures — Mocks des modèles & explainers
+# Fixtures — Mocks du modèle & explainer
 # ─────────────────────────────────────────────
 
 FEATURES = ["feat_a", "feat_b", "feat_c", "feat_d", "feat_e"]
@@ -57,12 +54,12 @@ def _make_fake_explainer(n_features):
 
 @pytest.fixture(autouse=True)
 def _patch_models():
-    """Remplace les dicts globaux du module pour éviter de charger les vrais modèles."""
+    """Remplace les dicts globaux du module pour éviter de charger le vrai modèle."""
     fake_model = _make_fake_model(FEATURES)
     fake_explainer = _make_fake_explainer(len(FEATURES))
     with (
-        patch.dict("main.AVAILABLE_MODELS", {"lgb": fake_model, "xgb": fake_model}, clear=True),
-        patch.dict("main.SHAP_EXPLAINERS", {"lgb": fake_explainer, "xgb": fake_explainer}, clear=True),
+        patch.dict("main.AVAILABLE_MODELS", {"lgb": fake_model}, clear=True),
+        patch.dict("main.SHAP_EXPLAINERS", {"lgb": fake_explainer}, clear=True),
     ):
         yield
 
@@ -116,11 +113,10 @@ class TestHealthRoutes:
         assert "available_models" in body
         assert "routes" in body
 
-    def test_root_lists_models(self, client):
-        """GET / expose la liste des modèles chargés (lgb, xgb)."""
+    def test_root_lists_lgb_model(self, client):
+        """GET / expose uniquement le modèle lgb."""
         models = client.get("/").json()["available_models"]
         assert "lgb" in models
-        assert "xgb" in models
 
     def test_models_endpoint(self, client):
         """GET /models renvoie les modèles dispos et ceux ayant un explainer SHAP."""
@@ -165,15 +161,22 @@ class TestPredictExplain:
         assert "predicted_label" in result.columns
         assert "proba" in result.columns
 
-    def test_explain_unknown_model(self, client):
-        """/explain avec un modèle inconnu → 400."""
-        resp = _post_csv(client, "/predict/explain?model=unknown")
-        assert resp.status_code == 400
-
     def test_explain_output_filename(self, client):
-        """Le nom de fichier renvoyé contient 'explained' (vs 'predictions' pour /predict)."""
+        """Le nom de fichier renvoyé contient 'explained'."""
         resp = _post_csv(client, "/predict/explain")
         assert "explained" in resp.headers["content-disposition"]
+
+    def test_explain_empty_file_raises_422(self, client):
+        """Fichier vide (aucune ligne) → 422."""
+        empty_df = pd.DataFrame(columns=FEATURES)
+        resp = _post_csv(client, "/predict/explain", empty_df)
+        assert resp.status_code == 422
+
+    def test_explain_missing_features_raises_422(self, client):
+        """Fichier sans les colonnes attendues → 422."""
+        bad_df = pd.DataFrame({"wrong_col": [1, 2, 3]})
+        resp = _post_csv(client, "/predict/explain", bad_df)
+        assert resp.status_code == 422
 
 
 # ═════════════════════════════════════════════
@@ -227,17 +230,9 @@ class TestUtilities:
 
     def test_serialize_xlsx(self):
         """_serialize : extension .xlsx → media type spreadsheet et nom suffixé."""
-        data, media, name = _serialize(pd.DataFrame({"a": [1, 2]}), "test.xlsx")
+        _, media, name = _serialize(pd.DataFrame({"a": [1, 2]}), "test.xlsx")
         assert "spreadsheetml" in media
         assert name == "test_predictions.xlsx"
-
-    def test_sse_format(self):
-        """_sse : produit une frame SSE valide ('event: <name>\\n' + 'data: <json>\\n\\n')."""
-        result = _sse("progress", {"processed": 5, "total": 10})
-        assert result.startswith("event: progress\n")
-        assert "data: " in result
-        parsed = json.loads(result.split("data: ")[1].strip())
-        assert parsed["processed"] == 5
 
     def test_build_output_with_proba(self):
         """_build_output : ajoute predicted_label et proba ; SK_ID_CURR placé en tête."""
@@ -274,5 +269,5 @@ class TestUtilities:
 
     def test_get_expected_features_none(self):
         """_get_expected_features : modèle sans attribut connu → None."""
-        model = MagicMock(spec=[])  # aucun attribut
+        model = MagicMock(spec=[])
         assert _get_expected_features(model) is None

@@ -1,9 +1,9 @@
 # ML Prediction API
 
 API FastAPI pour prédire un label **0 ou 1** à partir d'un fichier CSV ou Excel.  
-Deux modèles disponibles : **LightGBM** et **XGBoost**.
+Modèle : **LightGBM**.
 
-La colonne **`SK_ID_CURR`** est toujours conservée dans le fichier de sortie et placée en première position, quelle que soit la route utilisée.
+La colonne **`SK_ID_CURR`** est toujours conservée dans le fichier de sortie et placée en première position.
 
 ---
 
@@ -13,17 +13,16 @@ La colonne **`SK_ID_CURR`** est toujours conservée dans le fichier de sortie et
 project/
 │
 ├── main.py               ← API FastAPI
-├── predict_client.py     ← Client Python (tqdm + toutes routes)
 ├── requirements.txt      ← Dépendances Python
+├── tests_unitaires.py    ← Tests pytest
 ├── README.md             ← Ce fichier
 │
-└── models/               ← ⚠️ À créer — placez vos .pkl ici
-    ├── LightGBM_best_model.pkl
-    └── XGBoost_best_model.pkl
+└── models/               ← ⚠️ À créer — placez votre .pkl ici
+    └── LightGBM_best_model.pkl
 ```
 
 > **Important** : le dossier `models/` n'est pas inclus dans ce repo.  
-> Copiez vos fichiers `.pkl` générés par MLflow dans ce dossier avant de démarrer.
+> Copiez votre fichier `LightGBM_best_model.pkl` généré par MLflow dans ce dossier avant de démarrer.
 
 ---
 
@@ -46,12 +45,11 @@ source .venv/bin/activate        # Linux / macOS
 pip install -r requirements.txt
 ```
 
-### 3. Placer les modèles
+### 3. Placer le modèle
 
 ```bash
 mkdir models
 cp /chemin/vers/LightGBM_best_model.pkl models/
-cp /chemin/vers/XGBoost_best_model.pkl  models/
 ```
 
 ### 4. Démarrer l'API
@@ -69,7 +67,7 @@ Documentation interactive Swagger : **http://localhost:8000/docs**
 
 ### `GET /` — Statut
 
-Vérifie que l'API tourne et liste les modèles disponibles.
+Vérifie que l'API tourne et liste le modèle disponible.
 
 ```bash
 curl http://localhost:8000/
@@ -78,21 +76,19 @@ curl http://localhost:8000/
 ```json
 {
   "status": "ok",
-  "available_models": ["lgb", "xgb"],
+  "available_models": ["lgb"],
   "id_column_preserved": "SK_ID_CURR",
   "routes": {
-    "POST /predict": "Prédiction directe — retourne le fichier enrichi",
-    "POST /predict/stream": "Prédiction avec progression SSE (tqdm côté client)",
-    "POST /predict/explain": "Prédiction + top-10 SHAP values par client"
+    "POST /predict/explain": "Prédiction + top-N SHAP values par client"
   }
 }
 ```
 
 ---
 
-### `GET /models` — Modèles disponibles
+### `GET /models` — Modèle disponible
 
-Liste les modèles chargés et la disponibilité de l'explainer SHAP.
+Liste le modèle chargé et la disponibilité de l'explainer SHAP.
 
 ```bash
 curl http://localhost:8000/models
@@ -100,74 +96,29 @@ curl http://localhost:8000/models
 
 ```json
 {
-  "available_models": ["lgb", "xgb"],
-  "shap_available": ["lgb", "xgb"]
+  "available_models": ["lgb"],
+  "shap_available": ["lgb"]
 }
 ```
 
 ---
 
-### `POST /predict` — Prédiction directe
+### `POST /predict/explain` — Prédiction + analyse SHAP locale
 
 **Paramètres (query string) :**
 
-| Paramètre      | Type    | Défaut | Description                                                  |
-|----------------|---------|--------|--------------------------------------------------------------|
-| `model`        | string  | `lgb`  | Modèle à utiliser : `lgb` (LightGBM) ou `xgb` (XGBoost)    |
-| `threshold`    | float   | `0.5`  | Seuil de décision pour label=1. Baissez pour + de recall.   |
-| `return_proba` | boolean | `true` | Si `true`, ajoute une colonne `proba` (proba classe 1)       |
+| Paramètre      | Type    | Défaut | Description                                              |
+|----------------|---------|--------|----------------------------------------------------------|
+| `threshold`    | float   | `0.5`  | Seuil de décision pour label=1                           |
+| `return_proba` | boolean | `true` | Ajoute la colonne `proba` (probabilité classe 1)         |
+| `n_top`        | int     | `10`   | Nombre de features SHAP à inclure dans le fichier (1–50) |
 
 **Corps de la requête :** fichier `.csv`, `.xlsx` ou `.xls` (multipart/form-data)
-
-**Réponse :** le fichier original enrichi avec les colonnes :
-- `SK_ID_CURR` : identifiant client (toujours en première position)
-- `predicted_label` : `0` ou `1`
-- `proba` : probabilité d'appartenir à la classe 1 (si `return_proba=true`)
-
-#### Exemples avec curl
-
-```bash
-# CSV avec LightGBM (défaut)
-curl -X POST "http://localhost:8000/predict" \
-  -F "file=@mon_fichier.csv" \
-  --output predictions.csv
-
-# Excel avec XGBoost, seuil à 0.3
-curl -X POST "http://localhost:8000/predict?model=xgb&threshold=0.3" \
-  -F "file=@mon_fichier.xlsx" \
-  --output predictions.xlsx
-```
-
----
-
-### `POST /predict/stream` — Prédiction avec progression SSE
-
-Même paramètres que `/predict`. La progression est envoyée en temps réel via Server-Sent Events.
-
-Utilisez `predict_client.py` pour une barre `tqdm` automatique :
-
-```python
-# Dans predict_client.py, décommentez :
-predict_with_progress()
-```
-
----
-
-### `POST /predict/explain` — Prédiction + analyse SHAP locale ⭐
-
-**Paramètres (query string) :**
-
-| Paramètre      | Type    | Défaut | Description                                                      |
-|----------------|---------|--------|------------------------------------------------------------------|
-| `model`        | string  | `lgb`  | Modèle à utiliser : `lgb` ou `xgb`                              |
-| `threshold`    | float   | `0.5`  | Seuil de décision                                                |
-| `return_proba` | boolean | `true` | Ajoute la colonne `proba`                                        |
-| `n_top`        | int     | `10`   | Nombre de features SHAP à inclure dans le fichier (1–50)         |
 
 **Réponse :** fichier enrichi avec les colonnes :
 - `SK_ID_CURR` : identifiant client (en première position)
 - `predicted_label` : `0` ou `1`
-- `proba` : probabilité classe 1
+- `proba` : probabilité classe 1 (si `return_proba=true`)
 - `shap_<feature>` × n_top : valeur SHAP des features les plus importantes
 
 **Interprétation des valeurs SHAP :**
@@ -175,7 +126,7 @@ predict_with_progress()
 - Valeur **négative** → la feature pousse la prédiction vers la classe **0** (non-défaut)
 - Plus la valeur absolue est grande, plus la feature a influencé la décision
 
-> ⚠️ Cette route est plus lente que `/predict` car le calcul SHAP (`TreeExplainer`) est intensif.  
+> ⚠️ Le calcul SHAP (`TreeExplainer`) est intensif.  
 > Pour de gros fichiers (> 10 000 lignes), préférez traiter par batch côté client.
 
 #### Exemple de fichier de sortie (`_explained.csv`)
@@ -192,16 +143,6 @@ SK_ID_CURR,feature_1,...,predicted_label,proba,shap_EXT_SOURCE_3,shap_EXT_SOURCE
 curl -X POST "http://localhost:8000/predict/explain?n_top=10" \
   -F "file=@mon_fichier.csv" \
   --output explained.csv
-```
-
-#### Utilisation depuis predict_client.py
-
-```python
-# Dans predict_client.py :
-N_TOP_SHAP = 10   # nombre de features SHAP souhaitées
-
-# Décommentez :
-predict_explain()
 ```
 
 ---
@@ -232,18 +173,18 @@ shap_values = client[shap_cols]
 
 ```bash
 git init
-git add main.py predict_client.py requirements.txt README.md
-git commit -m "Initial API v1.2"
+git add main.py requirements.txt tests_unitaires.py README.md
+git commit -m "Initial API v2.0"
 git remote add origin https://github.com/votre-username/votre-repo.git
 git push -u origin main
 ```
 
-### 2. Gérer les modèles `.pkl` sur Render
+### 2. Gérer le modèle `.pkl` sur Render
 
-**Option A — Modèles petits (< 100 Mo) : commit direct**
+**Option A — Modèle petit (< 100 Mo) : commit direct**
 ```bash
 git add models/
-git commit -m "Add models"
+git commit -m "Add model"
 git push
 ```
 
@@ -263,10 +204,9 @@ git push
 
 ### 4. Variables d'environnement (optionnel)
 
-| Clé          | Valeur   | Description                      |
-|--------------|----------|----------------------------------|
-| `MODELS_DIR` | `models` | Dossier contenant les .pkl       |
-| `BATCH_SIZE` | `500`    | Taille des batchs pour /stream   |
+| Clé          | Valeur   | Description                |
+|--------------|----------|----------------------------|
+| `MODELS_DIR` | `models` | Dossier contenant le .pkl  |
 
 ---
 
@@ -274,7 +214,7 @@ git push
 
 - La colonne `SK_ID_CURR` doit être présente — elle sera toujours conservée.
 - Les noms de colonnes sont normalisés automatiquement (caractères spéciaux → `_`).
-- Les valeurs manquantes sont acceptées — LightGBM/XGBoost les gèrent nativement.
+- Les valeurs manquantes sont acceptées — LightGBM les gère nativement.
 - La colonne `TARGET` ne doit **pas** être présente (c'est ce qu'on prédit).
 
 ### Exemple de fichier d'entrée
@@ -285,7 +225,7 @@ SK_ID_CURR,feature_1,feature_2,feature_3,...
 100002,1.1,0.3,2.4,...
 ```
 
-### Exemple de fichier de sortie `/predict/explain`
+### Exemple de fichier de sortie
 
 ```
 SK_ID_CURR,feature_1,...,predicted_label,proba,shap_EXT_SOURCE_3,shap_EXT_SOURCE_2,...
@@ -299,18 +239,16 @@ SK_ID_CURR,feature_1,...,predicted_label,proba,shap_EXT_SOURCE_3,shap_EXT_SOURCE
 
 | Code | Signification                                              |
 |------|------------------------------------------------------------|
-| 400  | Modèle inconnu                                             |
 | 415  | Format de fichier non supporté (uniquement csv/xlsx/xls)  |
 | 422  | Fichier vide ou colonnes manquantes                        |
 | 500  | Erreur interne lors de la prédiction ou du calcul SHAP     |
-| 503  | Explainer SHAP non disponible pour ce modèle               |
+| 503  | Explainer SHAP non disponible                              |
 
 ---
 
 ## Notes techniques
 
 - Le seuil par défaut est `0.5`. Renseignez votre seuil optimisé via le paramètre `threshold`.
-- Les modèles et explainers SHAP sont chargés **une seule fois au démarrage**.
+- Le modèle et l'explainer SHAP sont chargés **une seule fois au démarrage**.
 - Les fichiers uploadés ne sont jamais écrits sur le disque — tout est traité en mémoire.
-- Le `TreeExplainer` SHAP est compatible nativement avec LightGBM et XGBoost.
-- Les top-N features SHAP sont sélectionnées par **|mean SHAP| décroissant** sur l'ensemble du batch envoyé — ce sont donc les features les plus globalement influentes pour ce groupe de clients.
+- Les top-N features SHAP sont sélectionnées par **|mean SHAP| décroissant** sur l'ensemble du batch envoyé — ce sont les features les plus globalement influentes pour ce groupe de clients.
