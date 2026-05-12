@@ -230,7 +230,7 @@ html, body, [class*="css"] {
 .main-subtitle {
     font-family: 'DM Mono', monospace;
     font-size: 0.75rem;
-    color: #6b7280;
+    color: #9ca3af;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     margin-top: 4px;
@@ -282,7 +282,7 @@ html, body, [class*="css"] {
     font-size: 0.65rem;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: #9ca3af;
     margin-top: 6px;
 }
 .section-title {
@@ -290,7 +290,7 @@ html, body, [class*="css"] {
     font-size: 0.65rem;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: #6b7280;
+    color: #9ca3af;
     border-bottom: 1px solid #252830;
     padding-bottom: 8px;
     margin-bottom: 1rem;
@@ -322,7 +322,7 @@ section[data-testid="stSidebar"] .main-title {
 
 def html_sidebar_cache_summary(n_cached: int, n_acc: int, n_rej: int) -> str:
     return f"""
-    <div style="margin-top:0.5rem; font-size:0.7rem; color:#6b7280;">
+    <div style="margin-top:0.5rem; font-size:0.7rem; color:#9ca3af;">
         {n_cached} client(s) analysé(s)<br>
         ✅ Acceptés : <span style="color:{COLOR_ACCEPT}">{n_acc}</span> ·
         ❌ Rejetés : <span style="color:{COLOR_REJECT}">{n_rej}</span>
@@ -332,7 +332,7 @@ def html_sidebar_cache_summary(n_cached: int, n_acc: int, n_rej: int) -> str:
 
 def html_sidebar_status(threshold: float) -> str:
     return f"""
-    <div style="margin-top:1rem; font-size:0.7rem; color:#6b7280; letter-spacing:0.1em;">
+    <div style="margin-top:1rem; font-size:0.7rem; color:#9ca3af; letter-spacing:0.1em;">
         SEUIL : <span style="color:#f59e0b">{threshold}</span> ·
         MODÈLE : <span style="color:#f59e0b">LGB</span>
     </div>
@@ -352,17 +352,17 @@ def html_verdict_card(is_accepted: bool) -> str:
 
 
 HTML_LANDING_INSTRUCTIONS = """
-<div style="margin-top:3rem; color:#4b5563; font-size:0.8rem; line-height:2;">
-    <strong style="color:#6b7280;">1. Données clients</strong> — fichier CSV/Excel avec <code>SK_ID_CURR</code><br>
+<div style="margin-top:3rem; color:#9ca3af; font-size:0.8rem; line-height:2;">
+    <strong style="color:#f0ede6;">1. Données clients</strong> — fichier CSV/Excel avec <code>SK_ID_CURR</code><br>
     &nbsp;&nbsp;&nbsp;→ Pour chaque client, le dashboard appellera l'API <code>/predict/explain</code><br><br>
-    <strong style="color:#6b7280;">2. Population de référence</strong> — chargée automatiquement au démarrage<br>
+    <strong style="color:#f0ede6;">2. Population de référence</strong> — chargée automatiquement au démarrage<br>
     &nbsp;&nbsp;&nbsp;→ Permet d'afficher la distribution de référence et le scatter plot
 </div>
 """
 
 HTML_TRAIN_MISSING = """
 <div style="margin-top:1rem; padding:1rem; background:#161920; border:1px solid #252830;
-     border-radius:4px; font-size:0.8rem; color:#6b7280;">
+     border-radius:4px; font-size:0.8rem; color:#9ca3af;">
     📈 Fichier de référence introuvable — relancez <code>generate_reference_comparaison.py</code>
     pour générer la population de référence.
 </div>
@@ -370,7 +370,7 @@ HTML_TRAIN_MISSING = """
 
 HTML_FOOTER = """
 <div style="margin-top:3rem; padding-top:1rem; border-top:1px solid #1e2028;
-     font-size:0.65rem; color:#374151; letter-spacing:0.1em; text-align:center;">
+     font-size:0.65rem; color:#9ca3af; letter-spacing:0.1em; text-align:center;">
     HOME CREDIT SCORING DASHBOARD · SHAP ANALYSIS · LIGHTGBM
 </div>
 """

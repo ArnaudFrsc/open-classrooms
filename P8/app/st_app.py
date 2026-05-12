@@ -280,6 +280,7 @@ with col_metrics:
     fig_gauge.update_layout(**PLOTLY_LAYOUT, height=200)
     fig_gauge.update_layout(margin=dict(l=20, r=20, t=40, b=0))
     st.plotly_chart(fig_gauge, use_container_width=True)
+    st.caption(f"Probabilité estimée de défaut : {proba_pct:.1f}%. Seuil de décision : {threshold * 100:.1f}%.")
 
 # ─────────────────────────────────────────────
 # Row 2 — SHAP waterfall
@@ -310,12 +311,17 @@ if shap_values:
         yaxis=dict(gridcolor="#1e2028", zerolinecolor="#2d3040", tickfont=dict(size=10)),
         height=420,
         title=dict(
-            text="<span style='font-size:10px;color:#6b7280'>Rouge = pousse vers DÉFAUT · Vert = pousse vers NON-DÉFAUT</span>",
+            text="<span style='font-size:10px;color:#9ca3af'>Rouge = pousse vers DÉFAUT · Vert = pousse vers NON-DÉFAUT</span>",
             x=0, font=dict(size=10),
         ),
         xaxis_title="Valeur SHAP",
     )
     st.plotly_chart(fig_shap, use_container_width=True)
+    st.caption(
+        "Barres vers la droite (rouge) : la feature augmente la probabilité de défaut. "
+        "Barres vers la gauche (vert) : la feature la réduit. "
+        "Les valeurs numériques sont disponibles dans le tableau récapitulatif en bas de page."
+    )
 else:
     st.info("Aucune valeur SHAP retournée par l'API.")
 
@@ -333,13 +339,15 @@ if df_train is not None and "proba" in df_train.columns and "predicted_label" in
 
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Histogram(
-        x=df_acc["proba"], name="Acceptés (référence)", marker_color=COLOR_ACCEPT,
-        opacity=0.55, nbinsx=50,
+        x=df_acc["proba"], name="Acceptés (référence)",
+        marker=dict(color=COLOR_ACCEPT, opacity=0.55, pattern=dict(shape="")),
+        nbinsx=50,
         hovertemplate="Proba : %{x:.2f}<br>Nb : %{y}<extra>Acceptés</extra>",
     ))
     fig_hist.add_trace(go.Histogram(
-        x=df_rej["proba"], name="Rejetés (référence)", marker_color=COLOR_REJECT,
-        opacity=0.55, nbinsx=50,
+        x=df_rej["proba"], name="Rejetés (référence)",
+        marker=dict(color=COLOR_REJECT, opacity=0.55, pattern=dict(shape="/")),
+        nbinsx=50,
         hovertemplate="Proba : %{x:.2f}<br>Nb : %{y}<extra>Rejetés</extra>",
     ))
     fig_hist.add_vline(
@@ -364,6 +372,12 @@ if df_train is not None and "proba" in df_train.columns and "predicted_label" in
         legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11, color="#9ca3af"), x=0.75, y=0.95),
     )
     st.plotly_chart(fig_hist, use_container_width=True)
+    st.caption(
+        f"Distribution des probabilités de défaut — {len(df_train):,} clients de référence. "
+        f"Vert (plein) : clients acceptés ; Rouge (hachures /) : clients rejetés. "
+        f"Trait pointillé orange : client #{int(selected_id)} ({proba_pct:.1f}%). "
+        f"Trait gris : seuil de décision ({threshold})."
+    )
 
     # ── Scatter plot sur les 2 top SHAP features ──
     train_shap_cols = [c for c in df_train.columns if c.startswith("shap_")]
@@ -403,6 +417,11 @@ if df_train is not None and "proba" in df_train.columns and "predicted_label" in
                 legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11, color="#9ca3af")),
             )
             st.plotly_chart(fig_scatter, use_container_width=True)
+            st.caption(
+                f"Nuage de points des valeurs SHAP pour « {feature_label(feat1_shap)} » (axe X) "
+                f"et « {feature_label(feat2_shap)} » (axe Y), sur la population de référence. "
+                f"Le client #{int(selected_id)} est représenté par le point en forme de diamant (orange)."
+            )
 
 else:
     st.markdown(HTML_TRAIN_MISSING, unsafe_allow_html=True)
