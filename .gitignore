@@ -30,3 +30,7 @@ P9/nb_avk_images.ipynb
 *.pdf
 
 *.json
+
+# Streamlit Cloud — fichiers de données nécessaires au déploiement P8
+!P8/app/data/cols_kept.json
+!P8/app/data/test_reference.csv
