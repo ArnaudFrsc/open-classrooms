@@ -2,6 +2,8 @@
 Dashboard de scoring crédit — Home Credit
 Script Streamlit unifié : upload du fichier brut, appel API /predict/explain,
 cache des résultats par client dans session_state.
+
+
 """
 
 import io
